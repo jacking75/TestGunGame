@@ -11,6 +11,11 @@ export function startHardwareLog(manager: WiimoteManager, source: WiimoteSource)
   };
 
   send('page', { hid: !!navigator.hid, ua: navigator.userAgent });
+  // 컨트롤러 설정 단계 결과
+  window.addEventListener('tgg-hwlog', (e) => {
+    const { kind, ...data } = (e as CustomEvent<Record<string, unknown>>).detail;
+    send(String(kind), data);
+  });
   manager.onChange(() => send('availability', { availability: manager.availability, error: manager.lastError }));
 
   let lastButtons = '';

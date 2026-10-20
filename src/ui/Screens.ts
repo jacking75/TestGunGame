@@ -2,6 +2,7 @@ import type { GameSession } from '../game/GameSession';
 import { formatTime, h } from './dom';
 
 export interface StatusInfo {
+  device: string;
   wiimote: { text: string; tone: 'ok' | 'warn' | 'bad' };
   calibration: { text: string; tone: 'ok' | 'warn' | 'bad' };
   audio: string;
@@ -11,7 +12,7 @@ type Handler = () => void;
 
 /** 메뉴 화면 모음. 각 함수는 화면 요소를 만들어 돌려준다. */
 export const Screens = {
-  title(status: StatusInfo, on: { start: Handler; calibrate: Handler; connect: Handler; help: Handler; diag: Handler }) {
+  title(status: StatusInfo, on: { start: Handler; calibrate: Handler; setup: Handler; help: Handler; diag: Handler }) {
     return screen(
       h('h1', {}, 'TestGunGame'),
       h('p', { class: 'sub' }, 'Wii 총 레일 슈팅 — 1스테이지 훈련 시설'),
@@ -20,53 +21,10 @@ export const Screens = {
         'div',
         { class: 'buttons' },
         h('button', { class: 'primary', onclick: on.start, 'data-default': true }, '게임 시작'),
-        h('button', { onclick: on.connect }, 'Wii 리모컨 연결'),
+        h('button', { onclick: on.setup }, '컨트롤러 설정'),
         h('button', { onclick: on.calibrate }, '조준 보정'),
         h('button', { onclick: on.help }, '조작 방법'),
         h('button', { class: 'small', onclick: on.diag }, '입력 진단 (F3)'),
-      ),
-    );
-  },
-
-  connect(state: { supported: boolean; message: string; connecting: boolean }, on: { find: Handler; back: Handler }) {
-    if (!state.supported) {
-      return screen(
-        h('h2', {}, 'Wii 리모컨 연결'),
-        h('p', { class: 'bad' }, '이 브라우저는 장치 직접 연결(WebHID)을 지원하지 않습니다.'),
-        h('p', {}, 'Windows의 Chrome 또는 Edge 최신 버전으로 열어 주세요. 마우스로는 계속 플레이할 수 있습니다.'),
-        h('div', { class: 'buttons' }, h('button', { onclick: on.back }, '돌아가기')),
-      );
-    }
-    return screen(
-      h('h2', {}, 'Wii 리모컨 연결'),
-      state.message ? h('p', { class: 'warn' }, state.message) : null,
-      h('p', {}, '처음 한 번만 Windows에 리모컨을 등록하면, 다음부터는 리모컨 버튼을 누르는 것만으로 자동 연결됩니다.'),
-      h(
-        'ol',
-        {},
-        h('li', {}, '리모컨에 건 외장이 끼워져 있으면 빼고, 배터리 덮개를 엽니다.'),
-        h(
-          'li',
-          {},
-          'Windows ',
-          h('b', {}, '설정 → Bluetooth 및 장치 → 장치 추가 → Bluetooth'),
-          '를 엽니다. ',
-          h('a', { href: 'ms-settings:bluetooth', style: 'color:#19e3e3' }, 'Bluetooth 설정 열기'),
-        ),
-        h('li', {}, '배터리 칸 안의 빨간 ', h('b', {}, 'SYNC'), ' 버튼을 한 번 누릅니다. 리모컨 LED가 깜박입니다.'),
-        h('li', {}, '목록에 나타난 ', h('b', {}, 'Nintendo RVL-CNT-01'), '(또는 -TR)을 선택합니다. PIN을 물으면 비워 둔 채 연결합니다.'),
-        h('li', {}, '아래 ', h('b', {}, '리모컨 찾기'), '를 누르고, 브라우저 창에서 리모컨을 선택한 뒤 연결을 누릅니다.'),
-      ),
-      h(
-        'p',
-        { class: 'sub' },
-        'LED가 멈추고 연결이 끊기면 SYNC 버튼을 다시 누른 뒤 찾기를 누르세요. Dolphin 등 리모컨을 쓰는 다른 프로그램은 종료해 주세요.',
-      ),
-      h(
-        'div',
-        { class: 'buttons' },
-        h('button', { class: 'primary', onclick: on.find, disabled: state.connecting }, state.connecting ? '연결 중…' : '리모컨 찾기'),
-        h('button', { onclick: on.back }, '돌아가기'),
       ),
     );
   },
@@ -150,9 +108,9 @@ function statusBox(s: StatusInfo): HTMLElement {
   return h(
     'div',
     { class: 'status' },
+    h('div', { class: 'row' }, h('span', {}, '조작 방식'), h('span', { class: 'value' }, s.device)),
     h('div', { class: 'row' }, h('span', {}, 'Wii 리모컨'), h('span', { class: `value ${s.wiimote.tone}` }, s.wiimote.text)),
     h('div', { class: 'row' }, h('span', {}, '조준 보정'), h('span', { class: `value ${s.calibration.tone}` }, s.calibration.text)),
-    h('div', { class: 'row' }, h('span', {}, '마우스'), h('span', { class: 'value ok' }, '사용 가능 (Wii 없이도 플레이 가능)')),
     s.audio ? h('div', { class: 'row' }, h('span', {}, '소리'), h('span', { class: 'value warn' }, s.audio)) : null,
   );
 }

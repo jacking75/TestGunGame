@@ -16,8 +16,10 @@ import { Diagnostics } from '../ui/Diagnostics';
 import { h } from '../ui/dom';
 import { Hud } from '../ui/Hud';
 import { Screens, type StatusInfo } from '../ui/Screens';
+import { SetupWizard, type PlayDevice, type SetupStep } from '../ui/SetupWizard';
+import { loadButtonMap } from '../input/wiimote/ButtonMap';
 
-type AppState = 'title' | 'connect' | 'help' | 'calibrate' | 'playing' | 'ending' | 'paused' | 'result';
+type AppState = 'title' | 'setup' | 'help' | 'calibrate' | 'playing' | 'ending' | 'paused' | 'result';
 type AfterCalibration = 'play' | 'title' | 'paused';
 
 /** 보정 전 Wii 기본 매핑 배율(센서바 두 점의 중점이 화면 중앙 부근을 움직이는 범위에 맞춘 근사값) */
@@ -25,6 +27,24 @@ const WIIMOTE_DEFAULT_GAIN = 2.2;
 /** 화면 밖으로 이만큼 벗어나면 조준 신호 없음으로 본다 */
 const OFFSCREEN_MARGIN = 0.03;
 const RESULT_DELAY = 1.4;
+const DEVICE_KEY = 'tgg.device';
+
+function loadDevice(): PlayDevice | null {
+  try {
+    const v = localStorage.getItem(DEVICE_KEY);
+    return v === 'wiimote' || v === 'mouse' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveDevice(d: PlayDevice): void {
+  try {
+    localStorage.setItem(DEVICE_KEY, d);
+  } catch {
+    // 저장 실패 시 다음 실행에서 다시 고른다.
+  }
+}
 
 /** 전체 흐름: 시작 → (보정) → 전투 A·B·C → 결과, 그리고 일시정지·재시작 */
 export class App {
@@ -45,9 +65,9 @@ export class App {
   private state: AppState = 'title';
   private session: GameSession | null = null;
   private calib: { session: CalibrationSession; source: InputSource; then: AfterCalibration } | null = null;
+  private setup: { wizard: SetupWizard; then: 'play' | 'title' } | null = null;
+  private device: PlayDevice | null = loadDevice();
   private pauseReason = '';
-  private connectMessage = '';
-  private connecting = false;
   private endingTime = 0;
   private lastFrame = 0;
   private titleRefresh = 0;
@@ -60,6 +80,7 @@ export class App {
     this.mouse = new MouseKeyboardSource(this.canvas);
     this.wiimote = new WiimoteSource(this.wiimoteManager);
     this.hub = new InputHub([this.mouse, this.wiimote], this.mapAim);
+    if (this.device) this.hub.preference = this.device;
     this.calibView = new CalibrationView({
       retry: () => this.calib?.session.retryPoint(),
       restart: () => this.calib?.session.restart(),
@@ -146,6 +167,10 @@ export class App {
       case 'ending':
         this.updateEnding(dt);
         break;
+      case 'setup':
+        this.setup!.wizard.update(dt);
+        if (this.setup) this.updateMenu(dt, frame, this.setup.wizard.allowPointerClick);
+        break;
       case 'calibrate':
         this.updateCalibration(dt, frame);
         this.world.render(dt, null);
@@ -187,12 +212,12 @@ export class App {
     if (this.endingTime >= RESULT_DELAY) this.showResult();
   }
 
-  private updateMenu(dt: number, frame: InputFrame): void {
-    if (this.state === 'title') {
+  private updateMenu(dt: number, frame: InputFrame, allowClick = true): void {
+    if (this.state === 'title' || this.state === 'setup') {
       this.world.setIdleView(STAGE1);
       this.world.render(dt, null);
       this.titleRefresh += dt;
-      if (this.titleRefresh > 1) this.showTitle();
+      if (this.state === 'title' && this.titleRefresh > 1) this.showTitle();
     } else {
       this.world.render(dt, this.session);
     }
@@ -200,10 +225,10 @@ export class App {
     // Wii 총으로 메뉴 조작: 조준점으로 버튼을 겨냥하고 방아쇠로 누른다.
     const usingWii = frame.source === 'wiimote';
     this.root.classList.toggle('hide-cursor', usingWii);
-    this.crosshair.update(frame.aim, usingWii);
-    this.setHover(usingWii && frame.aim ? this.elementAt(frame.aim) : null);
+    this.crosshair.update(frame.aim, usingWii && allowClick);
+    this.setHover(usingWii && allowClick && frame.aim ? this.elementAt(frame.aim) : null);
     for (const press of frame.firePresses) {
-      if (press.source === 'wiimote' && press.aim) {
+      if (allowClick && press.source === 'wiimote' && press.aim) {
         const el = this.elementAt(press.aim);
         if (el instanceof HTMLElement) {
           this.sfx.play('ui');
@@ -310,7 +335,7 @@ export class App {
     this.setScreen(
       Screens.title(this.statusInfo(), {
         start: () => void this.startFlow(),
-        connect: () => void this.connectWiimote(),
+        setup: () => this.openSetup('choose', true, 'title'),
         calibrate: () => void this.beginCalibration('title'),
         help: () => this.showHelp(),
         diag: () => this.diag.toggle(),
@@ -321,16 +346,6 @@ export class App {
   private showHelp(): void {
     this.state = 'help';
     this.setScreen(Screens.help({ back: () => this.showTitle() }));
-  }
-
-  private showConnect(): void {
-    this.state = 'connect';
-    this.setScreen(
-      Screens.connect(
-        { supported: this.wiimoteManager.supported, message: this.connectMessage, connecting: this.connecting },
-        { find: () => void this.connectWiimote(), back: () => this.showTitle() },
-      ),
-    );
   }
 
   private showResult(): void {
@@ -356,7 +371,7 @@ export class App {
         tone: seen ? 'ok' : 'warn',
       };
     } else if (m.availability === 'error') wiimote = { text: m.lastError, tone: 'bad' };
-    else wiimote = { text: m.lastError || '연결 안 됨 — [Wii 리모컨 연결]을 누르세요', tone: 'warn' };
+    else wiimote = { text: m.lastError || '연결 안 됨 — 게임 시작 시 연결을 안내합니다', tone: 'warn' };
 
     const p = this.store.get('wiimote');
     let calibration: StatusInfo['calibration'];
@@ -366,45 +381,59 @@ export class App {
     else calibration = { text: `저장됨 · 중앙 오차 ${(p.centerError * 100).toFixed(1)}%`, tone: 'ok' };
     if (!this.store.persistent) calibration.text += ' (브라우저 저장 불가 — 이번 실행에만 유지)';
 
-    return { wiimote, calibration, audio: '' };
+    const device =
+      this.device === 'wiimote' ? 'Wii 총' : this.device === 'mouse' ? '마우스' : '아직 선택 안 함 — 게임 시작 시 선택합니다';
+    return { device, wiimote, calibration, audio: '' };
   }
 
-  // ───────── 리모컨 연결 ─────────
+  // ───────── 컨트롤러 설정 ─────────
 
-  private async connectWiimote(): Promise<void> {
-    if (!this.wiimoteManager.supported) {
-      this.connectMessage = '';
-      this.showConnect();
-      return;
-    }
-    this.connecting = true;
-    if (this.state === 'connect') this.showConnect();
-    const r = await this.wiimoteManager.request();
-    this.connecting = false;
-    if (r === 'connected') {
-      this.connectMessage = '';
-      this.sfx.play('ui');
+  /** 게임 시작 전 컨트롤러 설정 마법사를 연다. */
+  private openSetup(start: SetupStep, learnButtons: boolean, then: 'play' | 'title'): void {
+    const wizard = new SetupWizard(
+      {
+        manager: this.wiimoteManager,
+        source: this.wiimote,
+        sfx: this.sfx,
+        onDone: (d) => this.finishSetup(d),
+        onCancel: () => {
+          this.setup = null;
+          this.showTitle();
+        },
+        log: (data) => window.dispatchEvent(new CustomEvent('tgg-hwlog', { detail: { kind: 'setup', ...data } })),
+      },
+      start,
+      learnButtons,
+    );
+    this.setup = { wizard, then };
+    this.state = 'setup';
+    this.hud.show(false);
+    this.setScreen(wizard.el);
+  }
+
+  private finishSetup(device: PlayDevice): void {
+    const then = this.setup?.then ?? 'play';
+    this.setup = null;
+    this.device = device;
+    saveDevice(device);
+    this.hub.preference = device;
+    if (then === 'title') {
       this.showTitle();
       return;
     }
-    this.connectMessage =
-      r === 'cancelled'
-        ? '선택한 리모컨이 없습니다. 목록에 리모컨이 없다면 아래 순서로 먼저 Windows에 등록하세요.'
-        : this.wiimoteManager.lastError || '리모컨을 연결하지 못했습니다.';
-    this.showConnect();
+    const p = this.store.get(device);
+    if (device === 'wiimote' && (!p || !sameScreen(p.screen, currentScreen(this.canvas)))) void this.beginCalibration('play');
+    else this.startGame();
   }
 
   // ───────── 시작·일시정지·재시작 ─────────
 
+  /** 게임 시작: 실제 게임처럼 컨트롤러 확인을 거친다. 마우스를 고른 경우 바로 시작한다. */
   private async startFlow(): Promise<void> {
     await this.prepareScreen();
-    const src = this.calibrationSource();
-    const p = this.store.get(src.id);
-    if (src.id === 'wiimote' && (!p || !sameScreen(p.screen, currentScreen(this.canvas)))) {
-      this.beginCalibration('play');
-      return;
-    }
-    this.startGame();
+    if (!this.device) this.openSetup('choose', true, 'play');
+    else if (this.device === 'mouse') this.finishSetup('mouse');
+    else this.openSetup(this.wiimote.connected ? 'sensor' : 'connect', !loadButtonMap(), 'play');
   }
 
   /** 사용자 동작 안에서 소리와 전체 화면을 켠다. 거부되어도 창 모드로 계속한다. */

@@ -2,16 +2,10 @@ import type { Point } from '../calibration/homography';
 import { OneEuroFilter } from './OneEuroFilter';
 import type { Action, InputSource } from './types';
 import { IrPointer, type IrPointerResult } from './wiimote/IrPointer';
+import { DEFAULT_BUTTON_MAP, PAUSE_BUTTONS, loadButtonMap, type ButtonMap } from './wiimote/ButtonMap';
 import { NO_BUTTONS, type WiimoteButtons } from './wiimote/protocol';
 import type { WiimoteDevice, WiimoteReport } from './wiimote/WiimoteDevice';
 import type { WiimoteManager } from './wiimote/WiimoteManager';
-
-/** 건 외장 기준 버튼 의미. 방아쇠는 B를 누른다. */
-const BUTTON_ACTIONS: Record<Action, (b: WiimoteButtons) => boolean> = {
-  fire: (b) => b.b,
-  cover: (b) => b.a,
-  pause: (b) => b.plus || b.minus || b.home,
-};
 
 const ACTIVITY_MOVE = 0.004;
 
@@ -28,6 +22,8 @@ export class WiimoteSource implements InputSource {
   lastActivity = 0;
   move: Point = { x: 0, y: 0 };
   smoothing = true;
+  /** 기능별 버튼. 설정 단계에서 학습한 값이 있으면 그것을 쓴다. */
+  buttonMap: ButtonMap = loadButtonMap() ?? DEFAULT_BUTTON_MAP;
 
   private pointer = new IrPointer();
   private fx = new OneEuroFilter();
@@ -50,7 +46,7 @@ export class WiimoteSource implements InputSource {
   }
 
   isHeld(action: Action): boolean {
-    return this.connected && BUTTON_ACTIONS[action](this.buttons);
+    return this.connected && this.test(action, this.buttons);
   }
 
   takePresses(action: Action): (Point | null)[] {
@@ -61,6 +57,18 @@ export class WiimoteSource implements InputSource {
 
   reset(): void {
     this.presses = { fire: [], cover: [], pause: [] };
+  }
+
+  /** 원본 버튼 상태(설정 단계의 버튼 학습용) */
+  get rawButtons(): WiimoteButtons {
+    return this.buttons;
+  }
+
+  private test(action: Action, b: WiimoteButtons): boolean {
+    const m = this.buttonMap;
+    if (action === 'fire') return b[m.fire];
+    if (action === 'cover') return b[m.cover];
+    return PAUSE_BUTTONS.some((n) => n !== m.fire && n !== m.cover && b[n]);
   }
 
   private attach(device: WiimoteDevice | null): void {
@@ -102,9 +110,8 @@ export class WiimoteSource implements InputSource {
 
     const before = this.buttons;
     this.buttons = r.buttons;
-    for (const action of Object.keys(BUTTON_ACTIONS) as Action[]) {
-      const test = BUTTON_ACTIONS[action];
-      if (test(r.buttons) && !test(before)) {
+    for (const action of ['fire', 'cover', 'pause'] as Action[]) {
+      if (this.test(action, r.buttons) && !this.test(action, before)) {
         this.presses[action].push(this.rawAim ? { ...this.rawAim } : null);
         this.lastActivity = r.time;
       }

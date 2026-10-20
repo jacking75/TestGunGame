@@ -1,8 +1,8 @@
 import type { InputFrame } from '../input/types';
 import type { InputHub, SourcePreference } from '../input/InputHub';
-import { IR_HEIGHT, IR_WIDTH } from '../input/wiimote/protocol';
 import type { WiimoteSource } from '../input/WiimoteSource';
 import { h } from './dom';
+import { drawIrView } from './irView';
 
 const fmt = (p: { x: number; y: number } | null) => (p ? `${p.x.toFixed(3)}, ${p.y.toFixed(3)}` : '없음');
 
@@ -105,28 +105,6 @@ export class Diagnostics {
   }
 
   private drawIr(): void {
-    const g = this.irCanvas.getContext('2d')!;
-    const w = this.irCanvas.width;
-    const ht = this.irCanvas.height;
-    g.clearRect(0, 0, w, ht);
-    g.strokeStyle = '#222';
-    g.strokeRect(w / 2, 0, 0, ht);
-    g.strokeRect(0, ht / 2, w, 0);
-    const dots = this.wiimote.device?.dots ?? [];
-    for (const d of dots) {
-      // 리모컨 카메라 화면을 사용자 시점으로 보이도록 좌우 반전
-      const x = (1 - d.x / IR_WIDTH) * w;
-      const y = (d.y / IR_HEIGHT) * ht;
-      g.fillStyle = '#ffeb3b';
-      g.beginPath();
-      g.arc(x, y, 3 + d.size, 0, Math.PI * 2);
-      g.fill();
-    }
-    if (this.wiimote.ir.tracking !== 'none') {
-      g.strokeStyle = '#19e3e3';
-      g.beginPath();
-      g.arc(this.wiimote.ir.x * w, this.wiimote.ir.y * ht, 8, 0, Math.PI * 2);
-      g.stroke();
-    }
+    drawIrView(this.irCanvas, this.wiimote.device?.dots ?? [], this.wiimote.ir);
   }
 }

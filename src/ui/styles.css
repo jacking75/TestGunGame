@@ -635,3 +635,57 @@ table.controls td {
   background: #222;
   border: 1px solid #444;
 }
+
+/* 컨트롤러 설정 */
+.panel.setup .sub {
+  margin-bottom: 4px;
+}
+
+.setup-status {
+  font-size: 20px;
+  font-weight: 700;
+  min-height: 1.6em;
+}
+
+.setup-ir {
+  display: block;
+  width: 320px;
+  height: 240px;
+  margin: 8px auto;
+  border-radius: 8px;
+  border: 1px solid var(--panel-line);
+}
+
+.setup-hint {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(255, 212, 0, 0.08);
+  font-size: 16px;
+}
+
+.setup-tasks {
+  font-size: 20px;
+}
+
+.setup-tasks li {
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.setup-tasks li.current {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.setup-tasks li.done {
+  color: var(--text);
+}
+
+a.link {
+  color: var(--cyan);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
