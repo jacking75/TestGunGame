@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && tsc -p tsconfig.node.json && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "app:build": "node scripts/build-app.mjs",
+    "app": "host\\bin\\Release\\net48\\TestGunGame.exe",
+    "app:dev": "dotnet build host -c Debug --nologo -v q && host\\bin\\Debug\\net48\\TestGunGame.exe --dev http://localhost:25001/"
   },
   "dependencies": {
     "three": "0.186.1"

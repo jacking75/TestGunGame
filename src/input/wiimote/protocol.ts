@@ -35,11 +35,13 @@ export const InReport = {
   ReadData: 0x21,
   Ack: 0x22,
   ButtonsAccelIr12: 0x33,
+  ButtonsIr10Ext9: 0x36,
 } as const;
 
 /** 버튼 + 가속도 + 확장 IR(12바이트) 모드. 센서바 점 4개의 위치와 크기를 받는다. */
 export const DATA_MODE = InReport.ButtonsAccelIr12;
 export const IR_MODE_EXTENDED = 0x03;
+export const IR_MODE_BASIC = 0x01;
 
 export interface WiimoteButtons {
   left: boolean;
@@ -110,6 +112,41 @@ export function parseIrExtended(bytes: ArrayLike<number>, offset = 0): IrDot[] {
     dots.push({ x, y, size: b2 & 0x0f });
   }
   return dots;
+}
+
+/** 기본 IR 형식 10바이트(점 2개씩 5바이트 × 2). 확장 형식을 지원하지 않는 호환품용. */
+export function parseIrBasic(bytes: ArrayLike<number>, offset = 0): IrDot[] {
+  const dots: IrDot[] = [];
+  for (let i = 0; i < 2; i++) {
+    const o = offset + i * 5;
+    const hi = bytes[o + 2];
+    const pts = [
+      { x: bytes[o] | (((hi >> 4) & 3) << 8), y: bytes[o + 1] | (((hi >> 6) & 3) << 8) },
+      { x: bytes[o + 3] | ((hi & 3) << 8), y: bytes[o + 4] | (((hi >> 2) & 3) << 8) },
+    ];
+    for (const p of pts) if (p.x < IR_WIDTH && p.y < IR_HEIGHT) dots.push({ ...p, size: 3 });
+  }
+  return dots;
+}
+
+export interface IrConfig {
+  name: string;
+  /** IR 카메라 모드 레지스터 값 */
+  mode: number;
+  /** 요청할 데이터 보고서 번호 */
+  report: number;
+  sensitivity: IrSensitivity;
+}
+
+/** 흔한 순서: 확장 모드(정품·대부분 호환품) 감도 4종 → 기본 모드(일부 호환품) 감도 4종 */
+export function irConfigs(): IrConfig[] {
+  const modes = [
+    { label: '확장', mode: IR_MODE_EXTENDED, report: InReport.ButtonsAccelIr12 },
+    { label: '기본', mode: IR_MODE_BASIC, report: InReport.ButtonsIr10Ext9 },
+  ];
+  return modes.flatMap((m) =>
+    IR_SENSITIVITIES.map((s) => ({ name: `${m.label} · ${s.name}`, mode: m.mode, report: m.report, sensitivity: s })),
+  );
 }
 
 export interface WiimoteStatus {

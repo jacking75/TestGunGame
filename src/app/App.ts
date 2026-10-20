@@ -397,6 +397,7 @@ export class App {
         sfx: this.sfx,
         onDone: (d) => this.finishSetup(d),
         onCancel: () => {
+          this.setup?.wizard.dispose();
           this.setup = null;
           this.showTitle();
         },
@@ -413,6 +414,7 @@ export class App {
 
   private finishSetup(device: PlayDevice): void {
     const then = this.setup?.then ?? 'play';
+    this.setup?.wizard.dispose();
     this.setup = null;
     this.device = device;
     saveDevice(device);

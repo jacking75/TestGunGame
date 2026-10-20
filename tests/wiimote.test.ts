@@ -62,3 +62,27 @@ describe('IR 조준 계산', () => {
     expect(new IrPointer().update([]).tracking).toBe('none');
   });
 });
+
+describe('호환품 대응', () => {
+  it('기본 IR 형식(점 2개씩 5바이트)을 해석한다', async () => {
+    const { parseIrBasic } = await import('../src/input/wiimote/protocol');
+    // 점1 (683, 461), 점2 (300, 200): hi = y1hi<<6 | x1hi<<4 | y2hi<<2 | x2hi = 1<<6 | 2<<4 | 0<<2 | 1
+    const bytes = [0xab, 0xcd, 0x61, 0x2c, 0xc8, 0xff, 0xff, 0xff, 0xff, 0xff];
+    expect(parseIrBasic(bytes)).toEqual([
+      { x: 683, y: 461, size: 3 },
+      { x: 300, y: 200, size: 3 },
+    ]);
+  });
+
+  it('리모컨 후보는 정품 ID → 이름 → 제조사 순서이며 밸런스 보드·스위치 컨트롤러는 제외한다', async () => {
+    const { sortCandidates } = await import('../src/input/wiimote/hid');
+    const list = [
+      { vendorId: 0x057e, productId: 0x2009, productName: 'Pro Controller' },
+      { vendorId: 0x1234, productId: 0x0001, productName: 'Nintendo RVL-CNT-01' },
+      { vendorId: 0x057e, productId: 0x0306, productName: 'Nintendo RVL-WBC-01' },
+      { vendorId: 0x057e, productId: 0x0999, productName: '' },
+      { vendorId: 0x057e, productId: 0x0330, productName: 'Nintendo RVL-CNT-01-TR' },
+    ];
+    expect(sortCandidates(list).map((d) => d.productId)).toEqual([0x0330, 0x0001, 0x0999]);
+  });
+});

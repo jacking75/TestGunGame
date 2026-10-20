@@ -1,14 +1,14 @@
+import type { HidLike, InputReportListener } from './hid';
 import {
-  DATA_MODE,
   InReport,
-  IR_MODE_EXTENDED,
   IR_REG,
-  IR_SENSITIVITIES,
   NO_BUTTONS,
   OutReport,
   modelName,
   parseAck,
   parseButtons,
+  irConfigs,
+  parseIrBasic,
   parseIrExtended,
   parseStatus,
   writeRegisterPayload,
@@ -25,13 +25,14 @@ export interface WiimoteReport {
 }
 
 const ACK_TIMEOUT_MS = 400;
-/** 연결 후 이 시간 동안 IR 점이 하나도 안 보이면 다음 감도 설정으로 바꾼다. */
-const SENSITIVITY_RETRY_MS = 4000;
-const SENSITIVITY_KEY = 'tgg.wiimote.irSensitivity';
+/** 연결 후 이 시간 동안 IR 점이 하나도 안 보이면 다음 IR 설정으로 바꾼다. */
+const IR_RETRY_MS = 4000;
+const IR_CONFIG_KEY = 'tgg.wiimote.irConfig';
+const IR_CONFIGS = irConfigs();
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** WebHID로 연 Wii 리모컨 한 대. 초기화·IR 설정·보고서 해석·진동·LED를 담당한다. */
+/** Wii 리모컨(또는 호환품) 한 대. 초기화·IR 설정·보고서 해석·진동·LED를 담당한다. */
 export class WiimoteDevice {
   state: WiimoteState = 'connecting';
   error = '';
@@ -42,7 +43,7 @@ export class WiimoteDevice {
   batteryLow = false;
   lastReportTime = 0;
   lastDotsTime = 0;
-  sensitivityIndex = 0;
+  irConfigIndex = 0;
   reportCount = 0;
 
   private rumble = false;
@@ -52,11 +53,11 @@ export class WiimoteDevice {
   private listeners = new Set<(r: WiimoteReport) => void>();
   private watchdog: ReturnType<typeof setInterval> | null = null;
   private initializing = false;
-  private savedSensitivity = -1;
+  private savedConfig = -1;
 
-  constructor(readonly hid: HIDDevice) {
-    this.model = modelName(hid.productId);
-    this.sensitivityIndex = loadSensitivity();
+  constructor(readonly hid: HidLike) {
+    this.model = hid.productName || modelName(hid.productId);
+    this.irConfigIndex = loadIrConfig();
   }
 
   onReport(fn: (r: WiimoteReport) => void): () => void {
@@ -112,14 +113,15 @@ export class WiimoteDevice {
   }
 
   get sensitivityName(): string {
-    return IR_SENSITIVITIES[this.sensitivityIndex].name;
+    return IR_CONFIGS[this.irConfigIndex].name;
   }
 
-  /** IR 카메라를 켜고 확장 모드로 설정한 뒤 연속 보고 모드를 요청한다. */
+  /** IR 카메라를 켜고 현재 IR 설정(모드·감도)을 적용한 뒤 연속 보고 모드를 요청한다. */
   private async initIr(): Promise<void> {
     this.initializing = true;
     try {
-      const s = IR_SENSITIVITIES[this.sensitivityIndex];
+      const cfg = IR_CONFIGS[this.irConfigIndex];
+      const s = cfg.sensitivity;
       await this.send(OutReport.IrEnable, [0x04]);
       await sleep(20);
       await this.send(OutReport.IrEnable2, [0x04]);
@@ -127,7 +129,7 @@ export class WiimoteDevice {
       await this.writeRegister(IR_REG.Control, [0x08]);
       await this.writeRegister(IR_REG.Sensitivity1, s.block1);
       await this.writeRegister(IR_REG.Sensitivity2, s.block2);
-      await this.writeRegister(IR_REG.Mode, [IR_MODE_EXTENDED]);
+      await this.writeRegister(IR_REG.Mode, [cfg.mode]);
       await this.writeRegister(IR_REG.Control, [0x08]);
       await this.setReportMode();
     } finally {
@@ -137,7 +139,7 @@ export class WiimoteDevice {
 
   private setReportMode(): Promise<void> {
     // 0x04: 변화가 없어도 계속 보고(조준 좌표를 끊김 없이 받기 위해)
-    return this.send(OutReport.ReportMode, [0x04, DATA_MODE]);
+    return this.send(OutReport.ReportMode, [0x04, IR_CONFIGS[this.irConfigIndex].report]);
   }
 
   private async writeRegister(address: number, values: readonly number[]): Promise<void> {
@@ -172,14 +174,14 @@ export class WiimoteDevice {
   private checkIr = (): void => {
     if (this.state !== 'ready' || this.initializing) return;
     const now = performance.now();
-    if (now - this.lastDotsTime < SENSITIVITY_RETRY_MS) return;
+    if (now - this.lastDotsTime < IR_RETRY_MS) return;
     // 센서바가 꺼져 있거나 감도가 맞지 않는 경우: 다음 설정으로 자동 전환한다.
-    this.sensitivityIndex = (this.sensitivityIndex + 1) % IR_SENSITIVITIES.length;
+    this.irConfigIndex = (this.irConfigIndex + 1) % IR_CONFIGS.length;
     this.lastDotsTime = now;
     void this.initIr().catch(() => undefined);
   };
 
-  private handleReport = (ev: HIDInputReportEvent): void => {
+  private handleReport: InputReportListener = (ev): void => {
     const data = new Uint8Array(ev.data.buffer, ev.data.byteOffset, ev.data.byteLength);
     const now = performance.now();
     this.lastReportTime = now;
@@ -204,12 +206,13 @@ export class WiimoteDevice {
         }
         break;
       }
-      case InReport.ButtonsAccelIr12: {
-        this.dots = parseIrExtended(data, 5);
+      case InReport.ButtonsAccelIr12:
+      case InReport.ButtonsIr10Ext9: {
+        this.dots = ev.reportId === InReport.ButtonsAccelIr12 ? parseIrExtended(data, 5) : parseIrBasic(data, 2);
         if (this.dots.length > 0) {
-          if (this.savedSensitivity !== this.sensitivityIndex) {
-            saveSensitivity(this.sensitivityIndex);
-            this.savedSensitivity = this.sensitivityIndex;
+          if (this.savedConfig !== this.irConfigIndex) {
+            saveIrConfig(this.irConfigIndex);
+            this.savedConfig = this.irConfigIndex;
           }
           this.lastDotsTime = now;
         }
@@ -230,18 +233,18 @@ function withRumble(bytes: Uint8Array<ArrayBuffer>, rumble: boolean): Uint8Array
   return bytes;
 }
 
-function loadSensitivity(): number {
+function loadIrConfig(): number {
   try {
-    const v = Number(localStorage.getItem(SENSITIVITY_KEY));
-    return Number.isInteger(v) && v >= 0 && v < IR_SENSITIVITIES.length ? v : 0;
+    const v = Number(localStorage.getItem(IR_CONFIG_KEY));
+    return Number.isInteger(v) && v >= 0 && v < IR_CONFIGS.length ? v : 0;
   } catch {
     return 0;
   }
 }
 
-function saveSensitivity(index: number): void {
+function saveIrConfig(index: number): void {
   try {
-    localStorage.setItem(SENSITIVITY_KEY, String(index));
+    localStorage.setItem(IR_CONFIG_KEY, String(index));
   } catch {
     // 저장 실패 시 다음 실행에서 기본값부터 다시 찾는다.
   }

@@ -689,3 +689,10 @@ button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.setup-big {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.5;
+  margin: 12px 0;
+}

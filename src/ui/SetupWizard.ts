@@ -6,6 +6,7 @@ import {
   saveButtonMap,
   type WiimoteButtonName,
 } from '../input/wiimote/ButtonMap';
+import type { PairProgress, PairResult } from '../input/wiimote/hid';
 import { NO_BUTTONS, type WiimoteButtons } from '../input/wiimote/protocol';
 import type { WiimoteManager } from '../input/wiimote/WiimoteManager';
 import type { WiimoteSource } from '../input/WiimoteSource';
@@ -30,6 +31,20 @@ const SENSOR_STABLE = 1.0;
 const SENSOR_HINT_AFTER = 6;
 /** 통과 표시를 보여 준 뒤 다음 단계로 넘어가기까지 */
 const ADVANCE_DELAY = 0.8;
+/** 이미 등록된 리모컨이 자동 연결될 여유를 준 뒤 게임 안 등록을 시작한다 */
+const PAIR_START_DELAY = 1.5;
+const PAIR_SECONDS = 120;
+
+const PAIR_STAGE_TEXT: Record<string, (p: PairProgress) => string> = {
+  radio: () => '블루투스 준비됨 — 리모컨을 찾는 중…',
+  searching: () => '리모컨을 찾는 중… 빨간 SYNC 버튼을 누르세요.',
+  found: (p) => `리모컨 발견 — 등록 중 (${p.attempt}번째 방식)`,
+  retry: (p) => p.message,
+  're-register': () => '이전 등록 정보를 정리하고 다시 등록합니다…',
+  paired: () => '등록 완료 — 연결하는 중…',
+  already: () => '등록된 리모컨 — 연결하는 중…',
+  'no-radio': (p) => p.message,
+};
 
 type ButtonTask = 'fire' | 'cover' | 'pause';
 
@@ -45,6 +60,8 @@ export class SetupWizard {
   private stableTime = 0;
   private message = '';
   private searching = false;
+  private pairing: 'idle' | 'running' | 'ended' = 'idle';
+  private pairText = '';
   private prevButtons: WiimoteButtons = NO_BUTTONS;
   private buttonTask: ButtonTask = 'fire';
   private learned: { fire?: WiimoteButtonName; cover?: WiimoteButtonName; pause?: WiimoteButtonName } = {};
@@ -86,11 +103,14 @@ export class SetupWizard {
           this.deps.log({ step: 'connect', result: 'ok', model: d.model, productName: d.hid.productName });
         } else {
           const m = this.deps.manager;
+          if (m.canPair && this.pairing === 'idle' && this.stepTime >= PAIR_START_DELAY) void this.startPairing();
           this.status.className = 'setup-status warn';
           this.status.textContent =
             m.availability === 'connecting'
               ? '리모컨을 여는 중…'
-              : this.message || m.lastError || '리모컨을 찾고 있습니다. 아래 순서대로 연결하세요.';
+              : m.canPair
+                ? this.pairText || this.message || '리모컨을 찾는 중…'
+                : this.message || m.lastError || '리모컨을 찾고 있습니다. 아래 순서대로 연결하세요.';
         }
         break;
 
@@ -154,6 +174,40 @@ export class SetupWizard {
     }
   }
 
+  /** 마법사를 벗어날 때 진행 중인 등록을 멈춘다. */
+  dispose(): void {
+    if (this.pairing === 'running') this.deps.manager.cancelPair();
+  }
+
+  private async startPairing(): Promise<void> {
+    this.pairing = 'running';
+    this.pairText = '';
+    this.render();
+    const r: PairResult = await this.deps.manager.pair(PAIR_SECONDS, (p) => {
+      const f = PAIR_STAGE_TEXT[p.stage];
+      if (f) this.pairText = f(p);
+      this.deps.log({ step: 'pair', ...p });
+    });
+    this.deps.log({ step: 'pair', result: r });
+    if (this.step !== 'connect') return;
+    if (r === 'paired' || r === 'already') {
+      // 연결은 관리자의 자동 재시도가 맡는다. 등록 직후 Windows가 HID 장치를 만드는 데 몇 초 걸린다.
+      this.pairing = 'running';
+      this.pairText = '등록 완료 — 연결하는 중…';
+      return;
+    }
+    this.pairing = 'ended';
+    this.pairText =
+      r === 'timeout'
+        ? '리모컨을 찾지 못했습니다. SYNC 버튼을 누른 뒤 [다시 찾기]를 누르세요.'
+        : r === 'no-radio'
+          ? 'PC 블루투스를 찾지 못했습니다. 블루투스를 켜거나 USB 블루투스 어댑터를 연결하세요.'
+          : r === 'cancelled'
+            ? ''
+            : '리모컨 등록 중 오류가 났습니다. [다시 찾기]를 누르세요.';
+    this.render();
+  }
+
   private pass(text: string): void {
     this.deps.sfx.play('reload');
     this.status.className = 'setup-status ok';
@@ -170,6 +224,7 @@ export class SetupWizard {
 
   private goto(step: SetupStep): void {
     this.deps.log({ step, result: 'enter' });
+    if (this.step === 'connect' && step !== 'connect') this.dispose();
     this.step = step;
     this.enter(step);
   }
@@ -184,7 +239,11 @@ export class SetupWizard {
       this.buttonTask = 'fire';
       this.learned = {};
     }
-    if (step === 'connect') void this.deps.manager.autoConnect();
+    if (step === 'connect') {
+      this.pairing = 'idle';
+      this.pairText = '';
+      void this.deps.manager.autoConnect();
+    }
     this.render();
   }
 
@@ -222,6 +281,24 @@ export class SetupWizard {
         break;
       }
       case 'connect':
+        if (this.deps.manager.canPair) {
+          body = [
+            ...head('Wii 리모컨 연결'),
+            h('p', { class: 'setup-big' }, '리모컨 배터리 덮개를 열고 빨간 ', h('b', {}, 'SYNC'), ' 버튼을 누르세요.'),
+            h('p', { class: 'sub' }, '리모컨 LED가 깜박이는 동안 게임이 자동으로 등록하고 연결합니다. 전에 연결한 리모컨은 아무 버튼이나 누르면 됩니다.'),
+            this.status,
+            h(
+              'div',
+              { class: 'buttons' },
+              this.pairing === 'ended'
+                ? h('button', { class: 'primary', onclick: () => void this.startPairing(), 'data-default': true }, '다시 찾기')
+                : null,
+              mouseFallback,
+            ),
+            h('div', { class: 'buttons' }, back),
+          ];
+          break;
+        }
         body = [
           ...head('Wii 리모컨 연결'),
           this.status,

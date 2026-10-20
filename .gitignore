@@ -25,3 +25,7 @@ lerna-debug.log*
 
 # Vite
 /dist
+
+# C# host
+/host/bin
+/host/obj

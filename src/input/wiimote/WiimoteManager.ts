@@ -1,32 +1,42 @@
-import { WIIMOTE_FILTERS, isWiimote } from './protocol';
+import { createHidProvider, type HidLike, type HidProvider, type PairProgress, type PairResult } from './hid';
 import { WiimoteDevice } from './WiimoteDevice';
 
 export type WiimoteAvailability =
-  | 'unsupported' // 브라우저에 WebHID가 없다
-  | 'idle' // 허용된 리모컨이 없다
+  | 'unsupported' // 장치 접근 수단이 없다(WebHID 미지원 브라우저)
+  | 'idle' // 연결된 리모컨이 없다
   | 'connecting'
   | 'connected'
   | 'error';
 
+/** 연결이 안 된 동안 자동 재시도 간격(게임 실행 파일) */
+const RETRY_MS = 2000;
+
 /**
- * 리모컨 찾기·연결·재연결을 맡는다.
- * 1) 시작 시 이전에 허용한 리모컨을 자동으로 연다.
- * 2) 리모컨 전원이 다시 켜지면(브라우저 connect 이벤트) 자동으로 다시 연다.
- * 3) 처음 한 번은 사용자가 버튼을 눌러 브라우저 장치 선택 창에서 허용해야 한다(WebHID 규칙).
+ * 리모컨 찾기·연결·재연결·등록을 맡는다.
+ * - 게임 실행 파일: 블루투스 등록부터 게임 안에서 처리하고, 등록된 리모컨이 보이면 자동으로 연다.
+ * - 일반 브라우저: 처음 한 번 장치 선택 창에서 허용한 뒤 자동으로 연다.
+ * 후보가 여럿이면 흔한 순서(정품 ID → 이름 → 제조사)로 시도해 열리는 장치를 쓴다.
  */
 export class WiimoteManager {
   device: WiimoteDevice | null = null;
   availability: WiimoteAvailability;
   lastError = '';
+  readonly provider: HidProvider;
   private changeListeners = new Set<() => void>();
   private deviceListeners = new Set<(d: WiimoteDevice | null) => void>();
+  private opening = false;
 
-  constructor() {
-    this.availability = navigator.hid ? 'idle' : 'unsupported';
+  constructor(provider: HidProvider = createHidProvider()) {
+    this.provider = provider;
+    this.availability = provider.kind === 'none' ? 'unsupported' : 'idle';
   }
 
   get supported(): boolean {
     return this.availability !== 'unsupported';
+  }
+
+  get canPair(): boolean {
+    return this.provider.canPair;
   }
 
   onChange(fn: () => void): void {
@@ -38,52 +48,70 @@ export class WiimoteManager {
   }
 
   async init(): Promise<void> {
-    const hid = navigator.hid;
-    if (!hid) return;
-    hid.addEventListener('connect', (ev) => {
-      if (isWiimote(ev.device) && !this.device) void this.open(ev.device);
+    if (!this.supported) return;
+    this.provider.onConnect(() => {
+      if (!this.device) void this.autoConnect();
     });
-    hid.addEventListener('disconnect', (ev) => {
-      if (this.device && this.device.hid === ev.device) void this.drop('리모컨 연결이 끊겼습니다');
+    this.provider.onDisconnect((d) => {
+      if (this.device && this.device.hid === d) void this.drop('리모컨 연결이 끊겼습니다');
     });
+    if (this.provider.kind === 'host') {
+      setInterval(() => {
+        if (!this.device) void this.autoConnect();
+      }, RETRY_MS);
+    }
     await this.autoConnect();
   }
 
-  /** 이미 허용된 리모컨이 있으면 연다. 없으면 false. */
+  /** 쓸 수 있는 리모컨이 있으면 연다. */
   async autoConnect(): Promise<boolean> {
-    const hid = navigator.hid;
-    if (!hid || this.device) return !!this.device;
-    const devices = (await hid.getDevices()).filter(isWiimote);
-    for (const d of devices) {
-      if (await this.open(d)) return true;
-    }
-    return false;
+    if (this.device) return true;
+    if (!this.supported || this.opening) return false;
+    return this.openFirst(await this.provider.getDevices());
   }
 
-  /** 사용자 동작(클릭) 안에서 호출한다. 선택 창에서 리모컨을 고르면 연결한다. */
+  /** 사용자 동작(클릭) 안에서 호출한다. 일반 브라우저에서는 장치 선택 창이 뜬다. */
   async request(): Promise<'connected' | 'cancelled' | 'failed' | 'unsupported'> {
-    const hid = navigator.hid;
-    if (!hid) return 'unsupported';
+    if (!this.supported) return 'unsupported';
     if (await this.autoConnect()) return 'connected';
-    let picked: HIDDevice[];
+    let picked: HidLike[];
     try {
-      picked = await hid.requestDevice({ filters: WIIMOTE_FILTERS });
+      picked = await this.provider.requestDevice();
     } catch (e) {
       this.lastError = e instanceof Error ? e.message : String(e);
       return 'failed';
     }
     if (picked.length === 0) return 'cancelled';
-    for (const d of picked) {
-      if (await this.open(d)) return 'connected';
-    }
-    return 'failed';
+    return (await this.openFirst(picked)) ? 'connected' : 'failed';
+  }
+
+  /** 게임 안 블루투스 등록(게임 실행 파일에서만 가능). 등록 후 자동 연결은 init()의 재시도가 맡는다. */
+  pair(seconds: number, onProgress: (p: PairProgress) => void): Promise<PairResult> {
+    return this.provider.pair(seconds, onProgress);
+  }
+
+  cancelPair(): void {
+    this.provider.cancelPair();
   }
 
   async disconnect(): Promise<void> {
     await this.drop('');
   }
 
-  private async open(hid: HIDDevice): Promise<boolean> {
+  private async openFirst(candidates: HidLike[]): Promise<boolean> {
+    if (this.opening) return false;
+    this.opening = true;
+    try {
+      for (const d of candidates) {
+        if (await this.open(d)) return true;
+      }
+      return false;
+    } finally {
+      this.opening = false;
+    }
+  }
+
+  private async open(hid: HidLike): Promise<boolean> {
     if (this.device) await this.drop('');
     const dev = new WiimoteDevice(hid);
     this.device = dev;
@@ -126,11 +154,11 @@ export class WiimoteManager {
 
 function describeOpenError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
-  if (/open/i.test(msg)) {
-    return '리모컨을 열 수 없습니다. Dolphin 등 리모컨을 사용하는 다른 프로그램을 종료한 뒤 다시 시도하세요.';
+  if (/open|열 수/i.test(msg)) {
+    return '리모컨을 열 수 없습니다. 리모컨을 사용하는 다른 프로그램(Dolphin 등)을 종료해 주세요.';
   }
-  if (/sendReport|write/i.test(msg)) {
-    return '리모컨에 설정을 보내지 못했습니다. 리모컨 전원을 껐다 켠 뒤 다시 시도하세요.';
+  if (/sendReport|write|전송/i.test(msg)) {
+    return '리모컨이 응답하지 않습니다. 리모컨의 아무 버튼이나 눌러 깨워 주세요.';
   }
   return `리모컨 연결 실패: ${msg}`;
 }

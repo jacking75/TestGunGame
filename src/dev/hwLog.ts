@@ -1,3 +1,4 @@
+import { host } from '../platform/host';
 import type { WiimoteManager } from '../input/wiimote/WiimoteManager';
 import type { WiimoteSource } from '../input/WiimoteSource';
 
@@ -10,7 +11,14 @@ export function startHardwareLog(manager: WiimoteManager, source: WiimoteSource)
     void fetch('/__hwlog', { method: 'POST', body: line }).catch(() => undefined);
   };
 
-  send('page', { hid: !!navigator.hid, ua: navigator.userAgent });
+  send('page', { provider: manager.provider.kind, canPair: manager.canPair, hid: !!navigator.hid, ua: navigator.userAgent });
+  // 게임 실행 파일: 필터 전 전체 HID 목록(장치 열거가 되는지, 호환품 이름이 무엇인지 확인용)
+  void host
+    ?.call<{ vendorId: number; productId: number; productName: string }[]>('hid.list')
+    .then((all) => send('hid-all', { count: all.length, devices: all.map((d) => `${d.vendorId.toString(16)}:${d.productId.toString(16)} ${d.productName}`) }));
+  void manager.provider.getDevices().then((list) =>
+    send('candidates', { list: list.map((d) => ({ vendorId: d.vendorId, productId: d.productId, productName: d.productName })) }),
+  );
   // 컨트롤러 설정 단계 결과
   window.addEventListener('tgg-hwlog', (e) => {
     const { kind, ...data } = (e as CustomEvent<Record<string, unknown>>).detail;
