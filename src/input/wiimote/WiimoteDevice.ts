@@ -57,7 +57,10 @@ export class WiimoteDevice {
 
   constructor(readonly hid: HidLike) {
     this.model = hid.productName || modelName(hid.productId);
-    this.irConfigIndex = loadIrConfig();
+    // 저장된 설정은 센서바 양 끝이 잡혔을 때만 저장되므로, 다시 연결해도 확인된 설정으로 보고 고정한다.
+    const stored = loadIrConfig();
+    this.irConfigIndex = stored ?? 0;
+    if (stored !== null) this.savedConfig = stored;
   }
 
   onReport(fn: (r: WiimoteReport) => void): () => void {
@@ -236,12 +239,14 @@ function withRumble(bytes: Uint8Array<ArrayBuffer>, rumble: boolean): Uint8Array
   return bytes;
 }
 
-function loadIrConfig(): number {
+function loadIrConfig(): number | null {
   try {
-    const v = Number(localStorage.getItem(IR_CONFIG_KEY));
-    return Number.isInteger(v) && v >= 0 && v < IR_CONFIGS.length ? v : 0;
+    const raw = localStorage.getItem(IR_CONFIG_KEY);
+    if (raw === null) return null;
+    const v = Number(raw);
+    return Number.isInteger(v) && v >= 0 && v < IR_CONFIGS.length ? v : null;
   } catch {
-    return 0;
+    return null;
   }
 }
 
