@@ -104,6 +104,11 @@ export class App {
     requestAnimationFrame(this.loop);
   }
 
+  /** 개발 서버 전용 실물 확인 기록을 연결한다. */
+  startHardwareLog(start: (m: WiimoteManager, s: WiimoteSource) => void): void {
+    start(this.wiimoteManager, this.wiimote);
+  }
+
   // ───────── 조준 좌표 변환 ─────────
 
   /** 장치 원본 좌표 → 게임 화면 좌표(0~1). 보정 프로필이 있으면 원근 변환을 쓴다. */
