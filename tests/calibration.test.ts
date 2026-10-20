@@ -54,3 +54,22 @@ describe('조준 보정', () => {
     expect(s.index).toBe(0);
   });
 });
+
+describe('보정 중 조준점 표시', () => {
+  it('위쪽 두 점 측정 후에는 가로 위치가, 세 점부터는 전체 위치가 맞는다', async () => {
+    const { provisionalAim } = await import('../src/calibration/CalibrationSession');
+    // 실제 관계: 화면 = 원본을 뒤집고 줄이고 옮긴 것(보정 전에는 모른다)
+    const truth = (r: P) => ({ x: 1.6 * (r.x - 0.3), y: 0.2 + 1.4 * (0.9 - r.y) });
+    const toRaw = (t: P) => ({ x: t.x / 1.6 + 0.3, y: 0.9 - (t.y - 0.2) / 1.4 });
+    const measured = CALIBRATION_TARGETS.slice(0, 3).map(toRaw);
+    const probe = toRaw({ x: 0.7, y: 0.4 });
+    const err = (n: number) => {
+      const q = provisionalAim(measured.slice(0, n), probe, (p) => p);
+      const t = truth(probe);
+      return Math.hypot(q.x - t.x, q.y - t.y);
+    };
+    expect(err(3)).toBeLessThan(1e-9);
+    const two = provisionalAim(measured.slice(0, 2), probe, (p) => p);
+    expect(two.x).toBeCloseTo(truth(probe).x, 9);
+  });
+});

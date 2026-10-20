@@ -1,5 +1,5 @@
 import { Sfx } from '../audio/Sfx';
-import { CalibrationSession } from '../calibration/CalibrationSession';
+import { CalibrationSession, provisionalAim } from '../calibration/CalibrationSession';
 import { CalibrationStore, CALIBRATION_VERSION, currentScreen, sameScreen } from '../calibration/CalibrationStore';
 import { applyHomography, type Point } from '../calibration/homography';
 import { GameSession, type GameEvent } from '../game/GameSession';
@@ -134,16 +134,24 @@ export class App {
 
   /** 장치 원본 좌표 → 게임 화면 좌표(0~1). 보정 프로필이 있으면 원근 변환을 쓴다. */
   private mapAim = (source: InputSourceId, raw: Point): Point | null => {
-    const profile = this.store.get(source);
-    let p: Point;
-    if (profile) p = applyHomography(profile.matrix, raw.x, raw.y);
-    else if (source === 'wiimote')
-      p = { x: 0.5 + (raw.x - 0.5) * WIIMOTE_DEFAULT_GAIN, y: 0.5 + (raw.y - 0.5) * WIIMOTE_DEFAULT_GAIN };
-    else p = raw;
+    const p = this.projectAim(source, raw);
     const m = OFFSCREEN_MARGIN;
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || p.x < -m || p.x > 1 + m || p.y < -m || p.y > 1 + m) return null;
     return { x: Math.min(1, Math.max(0, p.x)), y: Math.min(1, Math.max(0, p.y)) };
   };
+
+  /** 화면 범위 확인 없이 원본 좌표를 화면 좌표로 옮긴다. */
+  private projectAim(source: InputSourceId, raw: Point): Point {
+    const profile = this.store.get(source);
+    return profile ? applyHomography(profile.matrix, raw.x, raw.y) : this.defaultAim(source, raw);
+  }
+
+  /** 보정 값이 없을 때의 근사 매핑 */
+  private defaultAim(source: InputSourceId, raw: Point): Point {
+    if (source === 'wiimote')
+      return { x: 0.5 + (raw.x - 0.5) * WIIMOTE_DEFAULT_GAIN, y: 0.5 + (raw.y - 0.5) * WIIMOTE_DEFAULT_GAIN };
+    return raw;
+  }
 
   private calibrationSummary(): string {
     const src = this.hub.activeSource()?.id ?? 'mouse';
@@ -438,17 +446,12 @@ export class App {
     else this.openSetup(this.wiimote.connected ? 'sensor' : 'connect', !loadButtonMap(), 'play');
   }
 
-  /** 사용자 동작 안에서 소리와 전체 화면을 켠다. 거부되어도 창 모드로 계속한다. */
+  /**
+   * 사용자 동작 안에서 소리를 켠다. 전체 화면은 요청하지 않는다(작업 표시줄이 보이는 창 모드로 실행).
+   * 보정 값은 창 크기 조건과 함께 저장되므로 창 크기가 바뀌면 다시 보정을 요구한다.
+   */
   private async prepareScreen(): Promise<void> {
     await this.sfx.unlock();
-    if (!document.fullscreenElement) {
-      try {
-        await this.root.requestFullscreen({ navigationUI: 'hide' });
-        await new Promise((r) => setTimeout(r, 200));
-      } catch {
-        // 전체 화면 거부: 창 모드로 진행
-      }
-    }
     this.world.resize();
   }
 
@@ -490,7 +493,6 @@ export class App {
 
   private resume(): void {
     if (this.state !== 'paused' || !this.session) return;
-    if (!document.fullscreenElement) void this.root.requestFullscreen().catch(() => undefined);
     this.hub.reset();
     this.state = 'playing';
     this.pauseReason = '';
@@ -528,7 +530,7 @@ export class App {
     const c = this.calib!;
     // 마우스로 보정 화면의 버튼을 누른 클릭은 측정으로 치지 않는다.
     const presses = frame.firePresses.filter(
-      (p) => p.source === c.source.id && !(p.source === "mouse" && p.aim && this.elementAt(p.aim)),
+      (p) => p.source === c.source.id && !(p.source === 'mouse' && p.aim && this.elementAt(p.aim)),
     );
     if (frame.pausePressed) {
       this.endCalibration(false);
@@ -539,10 +541,18 @@ export class App {
     } else {
       c.session.update(dt, c.source.rawAim, presses.length > 0);
     }
-    if (c.session.phase === 'failed' && !c.session.message.includes('방아쇠')) {
-      c.session.message += ` 방아쇠(클릭)를 당기면 처음부터 다시 합니다.`;
-    }
-    this.calibView.update(c.session, c.source.id, c.source.rawAim !== null);
+    // 지금 가리키는 곳을 보여 준다. 새 보정은 이전 보정 값 대신 기본 매핑에서 시작해 측정한 점으로 바로잡는다.
+    const raw = c.source.rawAim;
+    const shown = raw ? provisionalAim(c.session.measured, raw, (p) => this.defaultAim(c.source.id, p)) : null;
+    this.crosshair.update(
+      shown && { x: Math.min(1, Math.max(0, shown.x)), y: Math.min(1, Math.max(0, shown.y)) },
+      c.source.id === 'wiimote',
+    );
+    this.calibView.update(c.session, c.source.id, {
+      hasSignal: raw !== null,
+      ir: this.wiimote.ir,
+      dots: this.wiimote.device?.dots,
+    });
     if (c.session.phase === 'done') this.endCalibration(true);
   }
 

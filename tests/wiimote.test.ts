@@ -47,15 +47,38 @@ describe('IR 조준 계산', () => {
     expect(rolled.y).toBeCloseTo(level.y, 6);
   });
 
-  it('한 점이 시야 밖으로 나가도 직전 간격으로 중점을 추정한다', () => {
+  it('한쪽 끝이 카메라 시야 밖으로 나가면 기억한 간격으로 중점을 추정한다', () => {
     const p = new IrPointer();
-    const pair = p.update([
-      { x: 100, y: 300, size: 3 },
-      { x: 300, y: 300, size: 3 },
+    p.update([
+      { x: 40, y: 300, size: 3 },
+      { x: 240, y: 300, size: 3 },
     ]);
-    const single = p.update([{ x: 300, y: 300, size: 3 }]);
+    // 총을 오른쪽으로 돌려 두 끝이 왼쪽으로 100px 이동: 왼쪽 끝(-60)은 시야 밖, 오른쪽 끝(140)만 보인다.
+    const single = p.update([{ x: 140, y: 300, size: 3 }]);
+    const expected = new IrPointer().update([
+      { x: 0, y: 300, size: 3 },
+      { x: 80, y: 300, size: 3 },
+    ]); // 중점 40
     expect(single.tracking).toBe('single');
-    expect(single.x).toBeCloseTo(pair.x, 6);
+    expect(single.x).toBeCloseTo(expected.x, 6);
+  });
+
+  it('가까이서 한쪽 끝 LED가 여러 점으로 보여도 양 끝 두 묶음으로 계산한다(실측 배치)', async () => {
+    const { clusterDots } = await import('../src/input/wiimote/IrPointer');
+    // 2026-10-20 실측: 왼쪽 끝 3점, 오른쪽 끝 1점
+    const dots = [
+      { x: 43, y: 417, size: 1 },
+      { x: 770, y: 437, size: 4 },
+      { x: 85, y: 422, size: 2 },
+      { x: 124, y: 414, size: 2 },
+    ];
+    const ends = clusterDots(dots);
+    expect(ends).toHaveLength(2);
+    const r = new IrPointer().update(dots);
+    expect(r.tracking).toBe('pair');
+    // 두 끝의 중점 근처(카메라 x ≈ 430)를 가리켜야 한다. 같은 끝의 두 점을 고르면 x ≈ 0.9 부근으로 튄다.
+    expect(r.x).toBeGreaterThan(0.5);
+    expect(r.x).toBeLessThan(0.65);
   });
 
   it('점이 없으면 추적 없음으로 보고한다', () => {

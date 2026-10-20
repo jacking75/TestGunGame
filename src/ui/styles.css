@@ -696,3 +696,27 @@ button:disabled {
   line-height: 1.5;
   margin: 12px 0;
 }
+
+#calibration .calib-ir {
+  /* 목표점(가장자리 18%, 가운데)과 겹치지 않도록 아래 가운데에 둔다 */
+  position: absolute;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%);
+  width: 220px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--panel-line);
+}
+
+#calibration .calib-ir canvas {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}
+
+#calibration .calib-ir .sub {
+  margin: 0;
+  font-size: 13px;
+}

@@ -174,6 +174,8 @@ export class WiimoteDevice {
   private checkIr = (): void => {
     if (this.state !== 'ready' || this.initializing) return;
     const now = performance.now();
+    // 점이 잡힌 적 있는 설정은 유지한다. 이후에 점이 사라지는 것은 대개 센서바가 카메라 시야를 벗어난 것이다.
+    if (this.savedConfig === this.irConfigIndex) return;
     if (now - this.lastDotsTime < IR_RETRY_MS) return;
     // 센서바가 꺼져 있거나 감도가 맞지 않는 경우: 다음 설정으로 자동 전환한다.
     this.irConfigIndex = (this.irConfigIndex + 1) % IR_CONFIGS.length;
@@ -209,7 +211,8 @@ export class WiimoteDevice {
       case InReport.ButtonsAccelIr12:
       case InReport.ButtonsIr10Ext9: {
         this.dots = ev.reportId === InReport.ButtonsAccelIr12 ? parseIrExtended(data, 5) : parseIrBasic(data, 2);
-        if (this.dots.length > 0) {
+        // 점이 2개 이상 보여야(센서바 양 끝) 이 설정이 맞다고 본다. 반사광 1점으로 고정하지 않는다.
+        if (this.dots.length >= 2) {
           if (this.savedConfig !== this.irConfigIndex) {
             saveIrConfig(this.irConfigIndex);
             this.savedConfig = this.irConfigIndex;

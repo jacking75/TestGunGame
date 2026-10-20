@@ -10,81 +10,108 @@ export interface IrPointerResult {
   y: number;
   /** 두 점 사이 각도(라디안). 리모컨을 비튼 정도. */
   roll: number;
+  /** 카메라가 본 원래 점 개수(묶기 전) */
   dotCount: number;
 }
 
 const CX = IR_WIDTH / 2;
 const CY = IR_HEIGHT / 2;
+/** 같은 끝의 LED로 볼 최소 거리(px). 가까이서는 한쪽 끝의 LED 여러 개가 따로 보인다. */
+const MIN_CLUSTER_GAP = 60;
+/** 전체 점 퍼짐 대비 같은 끝으로 볼 비율 */
+const CLUSTER_RATIO = 0.3;
 
 /**
- * 센서바 두 점에서 조준 좌표를 만든다.
- * - 두 점: 중점을 쓰고, 두 점이 이루는 각도만큼 반대로 돌려 리모컨 비틀림을 보정한다.
- * - 한 점: 직전 두 점의 간격으로 사라진 점을 추정한다(화면 가장자리에서 한 점이 시야 밖으로 나가는 경우).
- * - 점이 3개 이상(반사광): 직전 간격과 가장 비슷한 쌍을 고른다.
+ * 가까운 점을 하나로 묶는다. 센서바 한쪽 끝은 LED 여러 개라 가까운 거리에서는 점 2~3개로 보인다.
+ * 묶음 중심은 점 크기로 가중 평균한다.
+ */
+export function clusterDots(dots: readonly IrDot[]): IrDot[] {
+  if (dots.length <= 1) return [...dots];
+  let spread = 0;
+  for (let i = 0; i < dots.length; i++)
+    for (let j = i + 1; j < dots.length; j++)
+      spread = Math.max(spread, Math.hypot(dots[j].x - dots[i].x, dots[j].y - dots[i].y));
+  const limit = Math.max(MIN_CLUSTER_GAP, spread * CLUSTER_RATIO);
+
+  // 단일 연결 묶기: 가까운 점끼리 같은 묶음
+  const group = dots.map((_, i) => i);
+  const root = (i: number): number => (group[i] === i ? i : (group[i] = root(group[i])));
+  for (let i = 0; i < dots.length; i++)
+    for (let j = i + 1; j < dots.length; j++)
+      if (Math.hypot(dots[j].x - dots[i].x, dots[j].y - dots[i].y) < limit) group[root(i)] = root(j);
+
+  const sums = new Map<number, { x: number; y: number; w: number; size: number }>();
+  dots.forEach((d, i) => {
+    const r = root(i);
+    const w = d.size + 1;
+    const s = sums.get(r) ?? { x: 0, y: 0, w: 0, size: 0 };
+    s.x += d.x * w;
+    s.y += d.y * w;
+    s.w += w;
+    s.size = Math.max(s.size, d.size);
+    sums.set(r, s);
+  });
+  return [...sums.values()].map((s) => ({ x: s.x / s.w, y: s.y / s.w, size: s.size }));
+}
+
+/**
+ * 센서바 두 끝에서 조준 좌표를 만든다.
+ * - 두 끝: 중점을 쓰고, 두 끝이 이루는 각도만큼 반대로 돌려 리모컨 비틀림을 보정한다.
+ * - 한 끝: 기억해 둔 두 끝 간격으로 사라진 끝을 추정한다. 사라진 끝은 카메라 화면 밖으로 나간 쪽이다.
+ * - 묶음이 3개 이상(반사광): 기억한 간격과 가장 비슷한 쌍을 고른다.
  */
 export class IrPointer {
-  private lastLeft: IrDot | null = null;
-  private lastRight: IrDot | null = null;
+  /** 왼쪽 끝 → 오른쪽 끝 벡터(카메라 좌표). 신호가 잠깐 끊겨도 유지한다. */
+  private gap: { x: number; y: number } | null = null;
   private lastRoll = 0;
 
   reset(): void {
-    this.lastLeft = null;
-    this.lastRight = null;
+    this.gap = null;
     this.lastRoll = 0;
   }
 
   update(dots: readonly IrDot[]): IrPointerResult {
-    if (dots.length >= 2) {
-      const [a, b] = this.pickPair(dots);
+    const ends = clusterDots(dots);
+
+    if (ends.length >= 2) {
+      const [a, b] = this.pickPair(ends);
       const left = a.x <= b.x ? a : b;
       const right = left === a ? b : a;
-      this.lastLeft = left;
-      this.lastRight = right;
-      const roll = Math.atan2(right.y - left.y, right.x - left.x);
+      this.gap = { x: right.x - left.x, y: right.y - left.y };
+      const roll = Math.atan2(this.gap.y, this.gap.x);
       this.lastRoll = roll;
       return this.result('pair', (left.x + right.x) / 2, (left.y + right.y) / 2, roll, dots.length);
     }
 
-    if (dots.length === 1 && this.lastLeft && this.lastRight) {
-      const d = dots[0];
-      const hx = (this.lastRight.x - this.lastLeft.x) / 2;
-      const hy = (this.lastRight.y - this.lastLeft.y) / 2;
-      const distL = (d.x - this.lastLeft.x) ** 2 + (d.y - this.lastLeft.y) ** 2;
-      const distR = (d.x - this.lastRight.x) ** 2 + (d.y - this.lastRight.y) ** 2;
-      const isLeft = distL <= distR;
-      const mx = isLeft ? d.x + hx : d.x - hx;
-      const my = isLeft ? d.y + hy : d.y - hy;
-      // 다음 프레임 추정을 위해 보이는 점 위치를 갱신한다.
-      if (isLeft) {
-        this.lastLeft = d;
-        this.lastRight = { x: d.x + hx * 2, y: d.y + hy * 2, size: 0 };
-      } else {
-        this.lastRight = d;
-        this.lastLeft = { x: d.x - hx * 2, y: d.y - hy * 2, size: 0 };
-      }
-      return this.result('single', mx, my, this.lastRoll, 1);
+    if (ends.length === 1 && this.gap) {
+      const d = ends[0];
+      const h = { x: this.gap.x / 2, y: this.gap.y / 2 };
+      // 보이는 끝이 왼쪽 끝이면 오른쪽 끝은 d + gap, 오른쪽 끝이면 왼쪽 끝은 d - gap.
+      // 둘 중 카메라 화면 밖으로 더 멀리 나간 쪽이 사라진 끝이다.
+      const outside = (x: number, y: number) =>
+        Math.max(0, -x, x - IR_WIDTH) + Math.max(0, -y, y - IR_HEIGHT);
+      const visibleIsLeft = outside(d.x + this.gap.x, d.y + this.gap.y) >= outside(d.x - this.gap.x, d.y - this.gap.y);
+      const mx = visibleIsLeft ? d.x + h.x : d.x - h.x;
+      const my = visibleIsLeft ? d.y + h.y : d.y - h.y;
+      return this.result('single', mx, my, this.lastRoll, dots.length);
     }
 
-    if (dots.length === 0) this.reset();
     return { tracking: 'none', x: 0.5, y: 0.5, roll: 0, dotCount: dots.length };
   }
 
-  private pickPair(dots: readonly IrDot[]): [IrDot, IrDot] {
-    if (dots.length === 2) return [dots[0], dots[1]];
-    const prevGap =
-      this.lastLeft && this.lastRight
-        ? Math.hypot(this.lastRight.x - this.lastLeft.x, this.lastRight.y - this.lastLeft.y)
-        : null;
-    let best: [IrDot, IrDot] = [dots[0], dots[1]];
+  private pickPair(ends: readonly IrDot[]): [IrDot, IrDot] {
+    if (ends.length === 2) return [ends[0], ends[1]];
+    const prevGap = this.gap ? Math.hypot(this.gap.x, this.gap.y) : null;
+    let best: [IrDot, IrDot] = [ends[0], ends[1]];
     let bestScore = Infinity;
-    for (let i = 0; i < dots.length; i++) {
-      for (let j = i + 1; j < dots.length; j++) {
-        const gap = Math.hypot(dots[j].x - dots[i].x, dots[j].y - dots[i].y);
-        // 직전 간격이 없으면 큰 점(가까운 LED) 쌍을 우선한다.
-        const score = prevGap !== null ? Math.abs(gap - prevGap) : -(dots[i].size + dots[j].size);
+    for (let i = 0; i < ends.length; i++) {
+      for (let j = i + 1; j < ends.length; j++) {
+        const gap = Math.hypot(ends[j].x - ends[i].x, ends[j].y - ends[i].y);
+        // 기억한 간격이 없으면 가장 멀리 떨어진 쌍(센서바 양 끝)을 고른다.
+        const score = prevGap !== null ? Math.abs(gap - prevGap) : -gap;
         if (score < bestScore) {
           bestScore = score;
-          best = [dots[i], dots[j]];
+          best = [ends[i], ends[j]];
         }
       }
     }

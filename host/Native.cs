@@ -172,8 +172,49 @@ namespace TestGunGame.Host
         [DllImport("bthprops.cpl", SetLastError = true)]
         public static extern int BluetoothRemoveDevice(ref ulong address);
 
-        [DllImport("bthprops.cpl", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern int BluetoothAuthenticateDevice(IntPtr hwnd, IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO info, char[] passkey, int passkeyLength);
+        // 인증 콜백 방식: PIN을 문자열이 아닌 원본 바이트로 보낼 수 있다(Wii 리모컨 PIN에는 0x00·0x80 이상 값이 들어간다).
+        public const int BLUETOOTH_AUTHENTICATION_METHOD_LEGACY = 1;
+        public const int BLUETOOTH_AUTHENTICATION_METHOD_OOB = 2;
+        public const int BLUETOOTH_AUTHENTICATION_METHOD_NUMERIC_COMPARISON = 3;
+        public const int BLUETOOTH_AUTHENTICATION_METHOD_PASSKEY_NOTIFICATION = 4;
+        public const int BLUETOOTH_AUTHENTICATION_METHOD_PASSKEY = 5;
+        public const int MITMProtectionNotRequired = 0;
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        public delegate bool AuthenticationCallbackEx(IntPtr param, IntPtr callbackParams);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothRegisterForAuthenticationEx(ref BLUETOOTH_DEVICE_INFO device, out IntPtr registration, AuthenticationCallbackEx callback, IntPtr param);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern bool BluetoothUnregisterAuthentication(IntPtr registration);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothSendAuthenticationResponseEx(IntPtr hRadio, IntPtr response);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothAuthenticateDeviceEx(IntPtr hwnd, IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO device, IntPtr oobData, int authenticationRequirement);
+
+        /// <summary>
+        /// BLUETOOTH_AUTHENTICATE_RESPONSE(48바이트): 주소(8) · 방식(4) · 공용체(32: PIN 16+길이 1 / 숫자 4) · 거절(1)
+        /// </summary>
+        public static IntPtr BuildAuthResponse(ulong remote, int method, byte[] pin, uint numeric)
+        {
+            IntPtr p = Marshal.AllocHGlobal(48);
+            for (int i = 0; i < 48; i++) Marshal.WriteByte(p, i, 0);
+            Marshal.WriteInt64(p, 0, (long)remote);
+            Marshal.WriteInt32(p, 8, method);
+            if (method == BLUETOOTH_AUTHENTICATION_METHOD_LEGACY)
+            {
+                for (int i = 0; i < pin.Length && i < 16; i++) Marshal.WriteByte(p, 12 + i, pin[i]);
+                Marshal.WriteByte(p, 28, (byte)pin.Length);
+            }
+            else
+            {
+                Marshal.WriteInt32(p, 12, (int)numeric);
+            }
+            return p;
+        }
 
         [DllImport("bthprops.cpl", SetLastError = true)]
         public static extern int BluetoothSetServiceState(IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO info, ref Guid service, int flags);

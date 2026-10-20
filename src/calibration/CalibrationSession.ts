@@ -1,6 +1,7 @@
 import { applyHomography, computeHomography, isConvexQuad, type Homography, type Point } from './homography';
 
-const INSET = 0.12;
+/** 목표점을 화면 가장자리에서 들인 비율. 너무 바깥이면 센서바가 리모컨 카메라 시야를 벗어나기 쉽다. */
+const INSET = 0.18;
 
 /** 좌상 → 우상 → 우하 → 좌하 순서로 변환을 구하고, 중앙은 오차 검사에만 쓴다. */
 export const CALIBRATION_TARGETS: readonly Point[] = [
@@ -16,7 +17,7 @@ export const CALIBRATION_LIMITS = {
   collectSeconds: 0.45,
   minSamples: 8,
   /** 표본 흔들림 허용치(원본 좌표 단위) */
-  maxSpread: 0.025,
+  maxSpread: 0.03,
   /** 모서리 표본끼리 최소 간격(원본 좌표 단위). 이보다 가까우면 커서가 화면 끝에서 잘린 것이다. */
   minCornerGap: 0.05,
   /** 중앙 확인점 허용 오차(화면 짧은 변 대비) */
@@ -168,4 +169,43 @@ function median(v: number[]): number {
   const s = [...v].sort((a, b) => a - b);
   const m = s.length >> 1;
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * 보정 도중 조준점 표시용 중간 매핑. 측정이 끝난 점으로 기본 매핑을 차례로 바로잡는다.
+ * 0점: 기본 매핑 · 1점: 위치 이동 · 2점(위쪽 두 모서리): 가로 배율 · 3점 이상: 아핀 변환(기울기·세로 배율 포함)
+ */
+export function provisionalAim(measured: readonly Point[], raw: Point, base: (p: Point) => Point): Point {
+  const n = Math.min(measured.length, 4);
+  const b = base(raw);
+  if (n === 0) return b;
+  const m = measured.slice(0, n).map(base);
+  const t = CALIBRATION_TARGETS;
+  if (n === 1) return { x: b.x + (t[0].x - m[0].x), y: b.y + (t[0].y - m[0].y) };
+  if (n === 2) {
+    const dx = m[1].x - m[0].x;
+    const sx = Math.abs(dx) > 1e-6 ? (t[1].x - t[0].x) / dx : 1;
+    return { x: t[0].x + (b.x - m[0].x) * sx, y: b.y + (t[0].y - m[0].y) };
+  }
+  // 세 점(m0,m1,m2 → t0,t1,t2)으로 아핀 변환: q = t0 + A·(p − m0)
+  const [u1, u2] = [
+    { x: m[1].x - m[0].x, y: m[1].y - m[0].y },
+    { x: m[2].x - m[0].x, y: m[2].y - m[0].y },
+  ];
+  const [v1, v2] = [
+    { x: t[1].x - t[0].x, y: t[1].y - t[0].y },
+    { x: t[2].x - t[0].x, y: t[2].y - t[0].y },
+  ];
+  const det = u1.x * u2.y - u2.x * u1.y;
+  if (Math.abs(det) < 1e-9) return b;
+  // A = V · U⁻¹
+  const inv = { a: u2.y / det, b: -u2.x / det, c: -u1.y / det, d: u1.x / det };
+  const A = {
+    a: v1.x * inv.a + v2.x * inv.c,
+    b: v1.x * inv.b + v2.x * inv.d,
+    c: v1.y * inv.a + v2.y * inv.c,
+    d: v1.y * inv.b + v2.y * inv.d,
+  };
+  const p = { x: b.x - m[0].x, y: b.y - m[0].y };
+  return { x: t[0].x + A.a * p.x + A.b * p.y, y: t[0].y + A.c * p.x + A.d * p.y };
 }
