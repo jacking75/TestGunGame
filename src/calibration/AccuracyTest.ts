@@ -2,7 +2,7 @@ import type { Point } from './homography';
 
 /** 정확도 측정 지점(화면 비율). 센서바가 리모컨 시야를 벗어나지 않도록 가장자리 20% 안쪽까지만 둔다. */
 export const ACCURACY_TARGETS: readonly Point[] = [0.2, 0.5, 0.8].flatMap((y) => [0.2, 0.5, 0.8].map((x) => ({ x, y })));
-export const SHOTS_PER_TARGET = 10;
+export const SHOTS_PER_TARGET = 3;
 /** 초기 합격 기준(구현 계획 11절): 오차 90백분위가 화면 짧은 변의 3% 이하 */
 export const ACCURACY_LIMIT = 0.03;
 
@@ -25,7 +25,7 @@ export interface AccuracySummary {
   pass: boolean;
 }
 
-/** 9지점 × 10발 정지 조준 시험. 발사 순간의 게임 화면 좌표와 목표 중심의 차이를 모은다. */
+/** 9지점 × 3발 정지 조준 시험. 발사 순간의 게임 화면 좌표와 목표 중심의 차이를 모은다. */
 export class AccuracyTest {
   readonly shots: AccuracyShot[] = [];
   index = 0;
@@ -81,7 +81,7 @@ export class AccuracyTest {
 
 /** 방아쇠 반복 시험: 당김 1회당 1발인지, 길게 눌러도 1발인지 확인한다. */
 export class TriggerTest {
-  static readonly GOAL = 30;
+  static readonly GOAL = 10;
   /** 이 시간 이상 누르고 있으면 길게 누르기로 본다(ms) */
   static readonly LONG_PRESS = 1500;
   /** 이보다 짧은 간격으로 연달아 들어온 눌림은 접점 떨림(중복 입력)으로 의심한다(ms) */

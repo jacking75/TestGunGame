@@ -8,7 +8,7 @@ describe('정확도 측정', () => {
     expect(shot.error).toBeCloseTo(19.2 / 1080, 6);
   });
 
-  it('9지점 × 10발 후 끝나고, 신호 없음이 있는 지점은 도달로 치지 않는다', () => {
+  it('9지점 × 지점당 발수 후 끝나고, 신호 없음이 있는 지점은 도달로 치지 않는다', () => {
     const t = new AccuracyTest({ width: 1920, height: 1080 }, false);
     ACCURACY_TARGETS.forEach((p, i) => {
       for (let k = 0; k < SHOTS_PER_TARGET; k++) t.shoot(i === 8 ? null : { x: p.x + 0.005, y: p.y });
@@ -16,8 +16,8 @@ describe('정확도 측정', () => {
     expect(t.done).toBe(true);
     expect(t.shoot({ x: 0.5, y: 0.5 })).toBeNull();
     const s = t.summary();
-    expect(s.shots).toBe(90);
-    expect(s.noSignal).toBe(10);
+    expect(s.shots).toBe(9 * SHOTS_PER_TARGET);
+    expect(s.noSignal).toBe(SHOTS_PER_TARGET);
     expect(s.reached.filter(Boolean)).toHaveLength(8);
     expect(s.pass).toBe(false);
   });
