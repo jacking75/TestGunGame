@@ -221,6 +221,10 @@ namespace TestGunGame.Host
                     pairing?.Cancel();
                     return true;
 
+                case "log.append":
+                    HardwareLog.Append(msg.TryGetValue("line", out object line) ? line as string : null);
+                    return true;
+
                 default:
                     throw new InvalidOperationException("알 수 없는 명령: " + cmd);
             }

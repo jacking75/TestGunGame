@@ -3,12 +3,14 @@ import type { WiimoteManager } from '../input/wiimote/WiimoteManager';
 import type { WiimoteSource } from '../input/WiimoteSource';
 
 /**
- * 개발 서버 전용 실물 확인 기록. 연결 상태 변화·오류·버튼 눌림은 즉시, IR·배터리 요약은 1초마다 보낸다.
+ * 실물 확인 기록. 연결 상태 변화·오류·버튼 눌림·게임 결과는 즉시, IR·배터리 요약은 1초마다 남긴다.
+ * 배포용 게임 실행 파일에서는 호스트가 %LOCALAPPDATA%/TestGunGame/logs/hw-check.log에, 개발 서버(app:dev 포함)에서는 logs/hw-check.log에 쓴다.
  */
 export function startHardwareLog(manager: WiimoteManager, source: WiimoteSource): void {
   const send = (kind: string, data: Record<string, unknown>) => {
     const line = JSON.stringify({ t: new Date().toISOString(), kind, ...data });
-    void fetch('/__hwlog', { method: 'POST', body: line }).catch(() => undefined);
+    if (host && !import.meta.env.DEV) void host.call('log.append', { line }).catch(() => undefined);
+    else void fetch('/__hwlog', { method: 'POST', body: line }).catch(() => undefined);
   };
 
   send('page', { provider: manager.provider.kind, canPair: manager.canPair, hid: !!navigator.hid, ua: navigator.userAgent });

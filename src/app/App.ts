@@ -10,6 +10,7 @@ import { WiimoteManager } from '../input/wiimote/WiimoteManager';
 import { WiimoteSource } from '../input/WiimoteSource';
 import { World } from '../rendering/World';
 import { STAGE1 } from '../stage/stage1';
+import { AccuracyCheck } from '../ui/AccuracyCheck';
 import { CalibrationView } from '../ui/CalibrationView';
 import { Crosshair } from '../ui/Crosshair';
 import { Diagnostics } from '../ui/Diagnostics';
@@ -19,7 +20,7 @@ import { Screens, type StatusInfo } from '../ui/Screens';
 import { SetupWizard, type PlayDevice, type SetupStep } from '../ui/SetupWizard';
 import { loadButtonMap } from '../input/wiimote/ButtonMap';
 
-type AppState = 'title' | 'setup' | 'help' | 'calibrate' | 'playing' | 'ending' | 'paused' | 'result';
+type AppState = 'title' | 'setup' | 'help' | 'calibrate' | 'accuracy' | 'playing' | 'ending' | 'paused' | 'result';
 type AfterCalibration = 'play' | 'title' | 'paused';
 
 /** 보정 전 Wii 기본 매핑 배율(센서바 두 점의 중점이 화면 중앙 부근을 움직이는 범위에 맞춘 근사값) */
@@ -66,6 +67,7 @@ export class App {
   private session: GameSession | null = null;
   private calib: { session: CalibrationSession; source: InputSource; then: AfterCalibration } | null = null;
   private setup: { wizard: SetupWizard; then: 'play' | 'title' } | null = null;
+  private accuracy: { check: AccuracyCheck; source: InputSourceId } | null = null;
   private device: PlayDevice | null = loadDevice();
   private pauseReason = '';
   private endingTime = 0;
@@ -178,6 +180,9 @@ export class App {
       case 'setup':
         this.setup!.wizard.update(dt);
         if (this.setup) this.updateMenu(dt, frame, this.setup.wizard.allowPointerClick);
+        break;
+      case 'accuracy':
+        this.updateAccuracy(dt, frame);
         break;
       case 'calibrate':
         this.updateCalibration(dt, frame);
@@ -345,6 +350,7 @@ export class App {
         start: () => void this.startFlow(),
         setup: () => this.openSetup('choose', true, 'title'),
         calibrate: () => void this.beginCalibration('title'),
+        accuracy: () => void this.openAccuracy(),
         help: () => this.showHelp(),
         diag: () => this.diag.toggle(),
       }),
@@ -357,6 +363,8 @@ export class App {
   }
 
   private showResult(): void {
+    const s = this.session!;
+    this.hwlog('game-end', { outcome: s.phase, failReason: s.failReason, hp: s.hp, timeLeft: Math.round(s.timeLeft), device: this.device, ...s.stats });
     this.state = 'result';
     this.mouse.captureGameKeys = false;
     this.root.classList.remove('playing');
@@ -409,7 +417,7 @@ export class App {
           this.setup = null;
           this.showTitle();
         },
-        log: (data) => window.dispatchEvent(new CustomEvent('tgg-hwlog', { detail: { kind: 'setup', ...data } })),
+        log: (data) => this.hwlog('setup', data),
       },
       start,
       learnButtons,
@@ -464,6 +472,9 @@ export class App {
     this.root.classList.add('playing');
     this.root.classList.remove('hide-cursor');
     this.setScreen(null);
+    // 다시 도전 시 첫 프레임에 이전 판의 체력·시간이 보이지 않게 바로 갱신한다.
+    this.hud.update(0, this.session, false);
+    this.hwlog('game-start', { device: this.device, preference: this.hub.preference, wiimote: this.wiimote.connected });
     this.hud.show(true);
     this.hud.toast(STAGE1.points[0].name, 1.3);
   }
@@ -477,6 +488,7 @@ export class App {
     if (this.state !== 'playing') return;
     this.state = 'paused';
     this.pauseReason = reason;
+    this.hwlog('pause', { reason, fireHeld: this.hub.sources.some((x) => x.isHeld('fire')), coverHeld: this.hub.sources.some((x) => x.isHeld('cover')) });
     this.hub.reset();
     this.mouse.captureGameKeys = false;
     this.root.classList.remove('playing');
@@ -493,12 +505,69 @@ export class App {
 
   private resume(): void {
     if (this.state !== 'paused' || !this.session) return;
+    this.hwlog('resume', {});
     this.hub.reset();
     this.state = 'playing';
     this.pauseReason = '';
     this.mouse.captureGameKeys = true;
     this.root.classList.add('playing');
     this.setScreen(null);
+  }
+
+  // ───────── 정확도 측정 ─────────
+
+  private async openAccuracy(): Promise<void> {
+    await this.prepareScreen();
+    const source = this.calibrationSource().id;
+    const p = this.store.get(source);
+    const check = new AccuracyCheck({
+      wiimote: this.wiimote,
+      source,
+      calibration: p ? `중앙 오차 ${(p.centerError * 100).toFixed(1)}%` : source === 'wiimote' ? '없음 — 먼저 조준 보정을 하세요' : '없음(마우스는 보정 없이 정확)',
+      screen: () => {
+        const r = this.canvas.getBoundingClientRect();
+        return { width: r.width, height: r.height };
+      },
+      log: (kind, data) => this.hwlog(kind, data),
+      exit: () => this.closeAccuracy(),
+      sound: (name) => this.sfx.play(name),
+    });
+    this.accuracy = { check, source };
+    this.state = 'accuracy';
+    this.hub.reset();
+    this.mouse.captureGameKeys = true;
+    this.hud.show(false);
+    this.setScreen(check.el);
+  }
+
+  private updateAccuracy(dt: number, frame: InputFrame): void {
+    const { check, source } = this.accuracy!;
+    if (check.menuMode) {
+      check.update(frame, []);
+      if (this.accuracy) this.updateMenu(dt, frame);
+      return;
+    }
+    if (frame.pausePressed) {
+      this.closeAccuracy();
+      return;
+    }
+    const presses = frame.firePresses.filter((p) => p.source === source);
+    check.update(frame, presses);
+    this.world.render(dt, null);
+    this.root.classList.toggle('hide-cursor', source === 'wiimote');
+    this.crosshair.update(frame.aim, check.showCrosshair && frame.source === source);
+  }
+
+  private closeAccuracy(): void {
+    this.accuracy = null;
+    this.hub.reset();
+    this.root.classList.remove('hide-cursor');
+    this.showTitle();
+  }
+
+  /** 실물 확인 기록(hw-check.log)에 한 줄 남긴다. 기록 모듈이 없으면 무시된다. */
+  private hwlog(kind: string, data: Record<string, unknown>): void {
+    window.dispatchEvent(new CustomEvent('tgg-hwlog', { detail: { kind, ...data } }));
   }
 
   // ───────── 보정 ─────────
@@ -568,6 +637,7 @@ export class App {
         centerError: c.session.outcome.centerError,
         createdAt: new Date().toISOString(),
       });
+      this.hwlog('calibration', { source: c.source.id, centerError: c.session.outcome.centerError, screen: currentScreen(this.canvas) });
       this.sfx.play('reload');
     }
     this.calib = null;

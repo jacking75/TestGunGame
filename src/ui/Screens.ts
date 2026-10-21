@@ -12,7 +12,7 @@ type Handler = () => void;
 
 /** 메뉴 화면 모음. 각 함수는 화면 요소를 만들어 돌려준다. */
 export const Screens = {
-  title(status: StatusInfo, on: { start: Handler; calibrate: Handler; setup: Handler; help: Handler; diag: Handler }) {
+  title(status: StatusInfo, on: { start: Handler; calibrate: Handler; accuracy: Handler; setup: Handler; help: Handler; diag: Handler }) {
     return screen(
       h('h1', {}, 'TestGunGame'),
       h('p', { class: 'sub' }, 'Wii 총 레일 슈팅 — 1스테이지 훈련 시설'),
@@ -23,6 +23,7 @@ export const Screens = {
         h('button', { class: 'primary', onclick: on.start, 'data-default': true }, '게임 시작'),
         h('button', { onclick: on.setup }, '컨트롤러 설정'),
         h('button', { onclick: on.calibrate }, '조준 보정'),
+        h('button', { onclick: on.accuracy }, '정확도 측정'),
         h('button', { onclick: on.help }, '조작 방법'),
         h('button', { class: 'small', onclick: on.diag }, '입력 진단 (F3)'),
       ),

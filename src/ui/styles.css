@@ -498,13 +498,13 @@ table.controls td {
   z-index: 40;
 }
 
-#calibration .target {
+:is(#calibration, #accuracy) .target {
   position: absolute;
   width: 0;
   height: 0;
 }
 
-#calibration .target::before {
+:is(#calibration, #accuracy) .target::before {
   content: '';
   position: absolute;
   left: -30px;
@@ -516,7 +516,7 @@ table.controls td {
   box-shadow: 0 0 0 6px rgba(25, 227, 227, 0.35);
 }
 
-#calibration .target::after {
+:is(#calibration, #accuracy) .target::after {
   content: '';
   position: absolute;
   left: -5px;
@@ -527,20 +527,20 @@ table.controls td {
   background: var(--red);
 }
 
-#calibration .target.done::before {
+:is(#calibration, #accuracy) .target.done::before {
   border-color: #3c4650;
   box-shadow: none;
 }
 
-#calibration .target.done::after {
+:is(#calibration, #accuracy) .target.done::after {
   background: #3c4650;
 }
 
-#calibration .target.pending {
+:is(#calibration, #accuracy) .target.pending {
   opacity: 0.25;
 }
 
-#calibration .progress {
+:is(#calibration, #accuracy) .progress {
   position: absolute;
   left: -34px;
   top: 40px;
@@ -551,13 +551,13 @@ table.controls td {
   overflow: hidden;
 }
 
-#calibration .progress b {
+:is(#calibration, #accuracy) .progress b {
   display: block;
   height: 100%;
   background: var(--cyan);
 }
 
-#calibration .info {
+:is(#calibration, #accuracy) .info {
   position: absolute;
   left: 50%;
   top: 30%;
@@ -568,7 +568,7 @@ table.controls td {
   line-height: 1.6;
 }
 
-#calibration .info .msg {
+:is(#calibration, #accuracy) .info .msg {
   color: var(--yellow);
   min-height: 1.6em;
 }
@@ -580,6 +580,47 @@ table.controls td {
   transform: translateX(-50%);
   display: flex;
   gap: 12px;
+}
+
+/* 정확도 측정 */
+#accuracy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0d1014;
+  z-index: 40;
+}
+
+#accuracy .count {
+  font-size: 96px;
+  font-weight: 700;
+  color: var(--cyan);
+  line-height: 1.2;
+}
+
+#accuracy .panel table.controls {
+  font-size: 15px;
+  margin-bottom: 18px;
+}
+
+#accuracy .panel table.controls td,
+#accuracy .panel table.controls th {
+  padding: 4px 6px;
+}
+
+#accuracy li.done {
+  color: #7be495;
+}
+
+#accuracy .events {
+  margin: 12px 0 18px;
+  padding: 10px 12px;
+  min-height: 4em;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  font: 14px/1.6 Consolas, 'Malgun Gothic', monospace;
 }
 
 /* 진단 */
