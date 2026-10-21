@@ -65,7 +65,7 @@ npm run verify:exe -- --runs 3   # 실행 파일을 띄워 마우스로 자동 �
 | 일시정지 | + / − / HOME | Esc 또는 P |
 | 메뉴 선택 | 버튼을 겨냥하고 방아쇠 | 클릭 |
 
-**문제 해결:** 등록 상태는 `powershell -ExecutionPolicy Bypass -File scriptst-status.ps1`로 본다. `authenticated=1`이면 영구 등록, Windows 목록에 있어도 `authenticated=0`이면 임시 연결이다(게임이 다음 등록 때 자동으로 지우고 다시 등록한다). 연결 화면에 오류가 나오면 Dolphin 등 리모컨을 쓰는 다른 프로그램을 종료하고, 리모컨 전원을 껐다 켠 뒤 다시 찾는다. 진단 화면(F3)의 IR 점이 0개면 센서바 USB 전원과 방향을 확인한다.
+**문제 해결:** 등록 상태는 `powershell -ExecutionPolicy Bypass -File scripts/bt-status.ps1`로 본다. `authenticated=1`이면 영구 등록, Windows 목록에 있어도 `authenticated=0`이면 임시 연결이다(게임이 다음 등록 때 자동으로 지우고 다시 등록한다). 연결 화면에 오류가 나오면 Dolphin 등 리모컨을 쓰는 다른 프로그램을 종료하고, 리모컨 전원을 껐다 켠 뒤 다시 찾는다. 진단 화면(F3)의 IR 점이 0개면 센서바 USB 전원과 방향을 확인한다.
 
 ## 이전 시도(Touchmote) 정리
 
