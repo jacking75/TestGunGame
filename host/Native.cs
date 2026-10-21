@@ -172,10 +172,44 @@ namespace TestGunGame.Host
         [DllImport("bthprops.cpl", SetLastError = true)]
         public static extern int BluetoothRemoveDevice(ref ulong address);
 
-        // 등록(인증): Dolphin과 같이 구버전 함수에 PIN 바이트를 WCHAR 배열로 넘긴다(0x00·0x80 이상 값 포함).
-        // 콜백 방식(BluetoothRegisterForAuthenticationEx + BluetoothSendAuthenticationResponseEx)은 이 PC에서 응답 후 멈춰 쓰지 않는다.
-        [DllImport("bthprops.cpl", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern int BluetoothAuthenticateDevice(IntPtr hwnd, IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO info, char[] passkey, int passkeyLength);
+        // 등록(인증): 콜백 방식만 PIN을 원본 바이트로 보낼 수 있다(Wii 리모컨 PIN에는 0x00·0x80 이상 값이 들어간다).
+        // 구버전 BluetoothAuthenticateDevice(WCHAR PIN)는 이 PC 주소(17 00 9C 4A 55 8C)에서 매번 31로 실패했고,
+        // 실패하면 Windows가 리모컨 연결을 끊어 검색 상태가 풀린다(2026-10-22 기록). 쓰지 않는다.
+        public const int BLUETOOTH_AUTHENTICATION_METHOD_LEGACY = 1;
+        public const int MITMProtectionNotRequired = 0;
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        public delegate bool AuthenticationCallbackEx(IntPtr param, IntPtr callbackParams);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothRegisterForAuthenticationEx(ref BLUETOOTH_DEVICE_INFO device, out IntPtr registration, AuthenticationCallbackEx callback, IntPtr param);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern bool BluetoothUnregisterAuthentication(IntPtr registration);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothSendAuthenticationResponseEx(IntPtr hRadio, IntPtr response);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothAuthenticateDeviceEx(IntPtr hwnd, IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO device, IntPtr oobData, int authenticationRequirement);
+
+        [DllImport("bthprops.cpl", SetLastError = true)]
+        public static extern int BluetoothGetDeviceInfo(IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO device);
+
+        /// <summary>
+        /// BLUETOOTH_AUTHENTICATE_RESPONSE(48바이트): 주소 @0 · 방식 @8 · PIN @12(16) · PIN 길이 @28 · 거절 @44.
+        /// Windows SDK 10.0.26100 헤더로 컴파일해 확인한 배치다. 레거시 PIN 응답만 만든다.
+        /// </summary>
+        public static IntPtr BuildPinResponse(ulong remote, byte[] pin)
+        {
+            IntPtr p = Marshal.AllocHGlobal(48);
+            for (int i = 0; i < 48; i++) Marshal.WriteByte(p, i, 0);
+            Marshal.WriteInt64(p, 0, (long)remote);
+            Marshal.WriteInt32(p, 8, BLUETOOTH_AUTHENTICATION_METHOD_LEGACY);
+            for (int i = 0; i < pin.Length && i < 16; i++) Marshal.WriteByte(p, 12 + i, pin[i]);
+            Marshal.WriteByte(p, 28, (byte)pin.Length);
+            return p;
+        }
 
         /// <summary>인증 직후 호출해야 리모컨이 등록을 기억한다. 서비스 목록 버퍼 없이 개수만 묻는다(ERROR_MORE_DATA도 정상).</summary>
         [DllImport("bthprops.cpl", SetLastError = true)]

@@ -285,13 +285,11 @@ export class SetupWizard {
         if (this.deps.manager.canPair) {
           body = [
             ...head('Wii 리모컨 연결'),
-            h('p', { class: 'setup-big' }, '리모컨의 아무 버튼이나 누르세요.'),
+            h('p', { class: 'setup-big' }, '리모컨 배터리 덮개를 열고 빨간 ', h('b', {}, 'SYNC'), ' 버튼을 누르세요.'),
             h(
               'p',
               { class: 'sub' },
-              '처음 연결하는 리모컨이면 배터리 덮개를 열고 빨간 ',
-              h('b', {}, 'SYNC'),
-              ' 버튼을 누르세요. LED가 깜박이는 동안 게임이 자동으로 등록하며, 한 번 등록하면 다음부터는 아무 버튼만 누르면 연결됩니다.',
+              'LED가 깜박이는 동안 게임이 자동으로 등록하고 연결합니다. 영구 등록된 리모컨은 아무 버튼만 눌러도 연결됩니다.',
             ),
             this.status,
             h(

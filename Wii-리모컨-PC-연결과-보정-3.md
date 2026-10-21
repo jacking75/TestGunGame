@@ -7,7 +7,7 @@
 | 항목 | 채택한 방식 | 재사용할 코드 |
 |---|---|---|
 | 배포 형태 | 작은 Windows 실행 파일(C# .NET Framework 4.8 + WebView2) 안에 웹 게임을 띄운다. **작업 표시줄이 보이는 최대화 창**으로 실행하고 전체 화면으로 바꾸지 않는다(10절) | `host/` 전체 |
-| 리모컨 등록 | 게임 안에서 Windows 블루투스 API로 직접 등록. 사용자는 **처음 한 번 SYNC 버튼만** 누르고, 이후에는 아무 버튼으로 연결된다(3.2, 실물 재확인 대기) | `host/WiimotePairing.cs`, `host/Native.cs` |
+| 리모컨 등록 | 게임 안에서 Windows 블루투스 API로 직접 등록. 사용자는 **SYNC 버튼만** 누른다. 영구 등록(이후 아무 버튼으로 연결)은 시도 중이며 실물 미확인, 안 되면 임시 연결(3.2) | `host/WiimotePairing.cs`, `host/Native.cs` |
 | 데이터 송수신 | C#이 HID 원본 바이트만 주고받고, 해석은 TypeScript가 한다 | `host/HidDevices.cs`, `src/input/wiimote/hid.ts` |
 | 프로토콜 | IR 확장 모드 + 연속 보고(0x12 `04 33`) | `src/input/wiimote/protocol.ts`, `WiimoteDevice.ts` |
 | 조준 계산 | IR 점 묶기 → 양 끝 중점 → 비틀림 보정 → 평활화 | `src/input/wiimote/IrPointer.ts`, `src/input/OneEuroFilter.ts` |
@@ -44,51 +44,45 @@
   - SYNC 버튼(배터리 칸 빨간 버튼)으로 등록: **PC 블루투스 주소를 거꾸로 한 6바이트**. 성공하면 리모컨이 PC 주소를 기억해, 이후 **아무 버튼만 눌러도 리모컨이 PC에 스스로 연결**한다(PC 재부팅 후에도).
   - 1+2 버튼으로 등록: **리모컨 주소를 거꾸로 한 6바이트**. 리모컨이 PC를 기억하지 않으므로 다음에도 1+2·SYNC가 필요하다. 잘못된 방식의 PIN을 보내면 Windows가 리모컨 연결을 바로 끊는다(Dolphin 주석).
   - `BLUETOOTH_ADDRESS`의 `ulong`을 `BitConverter.GetBytes()`로 꺼낸 낮은 6바이트가 곧 "거꾸로 한 순서"다.
-- PIN 바이트에는 0x00과 0x80 이상 값이 흔히 들어간다(이 PC: `17 00 9C 4A 55 8C`). 바이트 하나를 WCHAR 하나로 담아 **`BluetoothAuthenticateDevice(…, WCHAR[6], 6)`**에 그대로 넘긴다(Dolphin·WiiPair와 같은 방식, 0x00도 길이로 전달되므로 문제없다).
-- **Windows 설정의 블루투스 목록에 보이는 것 ≠ 영구 등록.** 인증 없이 HID 서비스만 켜도 Windows는 장치를 목록에 기억(`fRemembered`)한다. 영구 등록 여부는 `fAuthenticated`(연결 키 보유)로만 판단한다. 2026-10-21 이 PC의 리모컨은 목록에 있었지만 `remembered=16, authenticated=0`이었다(3.4의 확인 방법). 인증 없이 기억만 된 항목은 다시 연결할 방법이 없으므로 지우고 새로 등록해야 한다.
+- PIN 바이트에는 0x00과 0x80 이상 값이 흔히 들어간다(이 PC: `17 00 9C 4A 55 8C`). **PIN을 WCHAR 문자열로 받는 `BluetoothAuthenticateDevice`는 이 PC에서 매번 31로 실패했다**(2026-10-20 1회, 2026-10-22 2회). Dolphin·WiiPair는 이 함수를 쓰지만, 주소 바이트가 모두 0x01~0x7F인 PC에서만 되는 것으로 보인다(추정, 미검증). PIN을 원본 바이트로 보낼 수 있는 것은 인증 콜백 방식(`BluetoothSendAuthenticationResponseEx`)뿐이다.
+- **인증이 실패하면 Windows가 리모컨 연결을 끊고 리모컨의 검색 상태(LED 깜박임)가 풀린다.** 2026-10-22 기록: 14:15:48 인증 31 실패 → 다음 발견은 20초 뒤(SYNC를 다시 눌렀을 때). 그래서 영구 등록 시도가 실패하면 **같은 검색 주기 안에서 곧바로 임시 연결**해야 한다. 임시 연결을 뒤로 미루면 연결 자체가 안 된다(2026-10-21 변경이 이 실수를 했다).
+- **Windows 설정의 블루투스 목록에 보이는 것 ≠ 영구 등록.** 인증 없이 HID 서비스만 켜도 Windows는 장치를 목록에 기억(`fRemembered`)한다. 영구 등록 여부는 `fAuthenticated`(연결 키 보유)로만 판단한다. 2026-10-21 이 PC의 리모컨은 목록에 있었지만 `remembered=16, authenticated=0`이었다(3.4의 확인 방법). 인증 없이 기억만 된 항목은 다시 연결할 방법이 없으므로 지우고 새로 등록해야 한다. 목록에 남은 항목은 등록을 막지 않는다(게임이 시작 시 지우며, 2026-10-22 `removed-stale` 결과 0으로 확인).
 - 정품 리모컨의 제조사 주소 앞자리는 `00:25:A0` 등 Nintendo OUI다. 검색 직후에는 **이름이 비어 있을 수 있다** → 이름만으로 찾으면 놓친다. 장치 종류(CoD `0x002504`: 주변기기/조이스틱)로도 찾아야 한다.
 - 리모컨이 검색 가능한 시간은 SYNC를 누른 뒤 약 20초(LED 깜박임). 실패하면 다시 눌러야 한다.
 
-### 3.2 등록 순서 (`host/WiimotePairing.cs`, 2026-10-21 Dolphin 방식으로 변경)
-
-근거: 현재 유지보수 중인 [Dolphin `IOWin.cpp`](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/HW/WiimoteReal/IOWin.cpp)의 `FindAndAuthenticateWiimotes`·`AuthenticateWiimote`와 [WiiPair](https://github.com/jordanbtucker/WiiPair).
+### 3.2 등록 순서 (`host/WiimotePairing.cs`, 2026-10-22)
 
 1. 인증 없이 기억만 된 항목(`fRemembered && !fAuthenticated`)을 `BluetoothRemoveDevice`로 지운다.
 2. `BluetoothFindFirstDevice`(inquiry, timeout 배수 2 ≈ 2.56초)를 반복하며 후보를 찾는다.
    - 후보 순위: 이름 `Nintendo RVL-CNT*` → 이름에 RVL/Nintendo/Wii → 이름 없는 조이스틱·게임패드 CoD. 밸런스 보드(`RVL-WBC`)는 제외.
 3. 이미 인증된(영구 등록된) 장치면 HID 서비스만 켜 두고 기다린다. 사용자가 리모컨 버튼을 누르면 리모컨이 스스로 연결한다. **꺼져 있다고 등록을 지우지 않는다**(지우면 SYNC가 다시 필요해진다).
-4. 인증 안 된 장치는 검색될 때마다 아래 순서로 한 번씩 시도한다(인증 함수는 8초 제한).
+4. 인증 안 된 장치를 찾으면 한 번의 검색 주기 안에서:
+   - (처음 2번 발견할 때만) **영구 등록 시도:** `BluetoothRegisterForAuthenticationEx`로 콜백을 등록하고 `BluetoothAuthenticateDeviceEx`를 부른다. 콜백이 레거시 PIN 요청(방식 1)을 받으면 SYNC PIN 원본 바이트로 `BluetoothSendAuthenticationResponseEx`에 응답한다. 6초 안에 끝나지 않으면 넘어간다(`BluetoothGetDeviceInfo`로 실제 인증 여부를 한 번 더 본다). 성공하면 **`BluetoothEnumerateInstalledServices(radio, &btdi, &count, NULL)`**을 부른다. Dolphin·WiiPair 모두 "이 호출을 하지 않으면 리모컨이 등록을 기억하지 않는다"고 적어 두었다(234 ERROR_MORE_DATA도 정상).
+   - **바로 이어서** `BluetoothSetServiceState(HID UUID 00001124-…, ENABLE)`로 HID 서비스를 켠다. 인증이 실패했으면 이것이 임시 연결이다.
+5. 게임 쪽 연결 관리자(`WiimoteManager`)가 2초마다 HID 목록을 확인하다가 자동으로 연다.
 
-| 순서 | 방식 | 설명 |
-|---|---|---|
-| 1~3회 | SYNC PIN(PC 주소 역순) — `BluetoothAuthenticateDevice` | Windows가 자주 **31(ERROR_GEN_FAILURE)** 또는 259(ERROR_NO_MORE_ITEMS)로 실패시키므로 같은 SYNC 동안 다시 시도한다(Dolphin은 검색·인증을 3회 반복) |
-| 4회 | 1+2 PIN(리모컨 주소 역순) | 사용자가 1+2로 검색 상태를 만든 경우 |
-| 5회 | 인증 없이 HID 서비스 켜기 | 임시 연결. 게임은 쓸 수 있지만 다음에 다시 SYNC가 필요하다 |
+진행 단계(`bt.progress`: found · auth-response 결과·lastError · authenticate 결과 코드 · services · paired의 `permanent`)는 설정 마법사가 기록 파일에 남긴다. 영구 등록 성공 여부는 `paired` 줄의 `"permanent":true`와 3.4의 `authenticated=1`로 판정한다.
 
-5. 인증에 성공하면 **`BluetoothEnumerateInstalledServices(radio, &btdi, &count, NULL)`을 호출한다.** Dolphin·WiiPair 모두 "이 호출을 하지 않으면 리모컨이 등록을 기억하지 않는다"고 적어 두었다(234 ERROR_MORE_DATA도 정상).
-6. `BluetoothSetServiceState(HID UUID 00001124-…, ENABLE)`로 HID 서비스를 켠다. 성공하면 게임 쪽 연결 관리자(`WiimoteManager`)가 2초마다 HID 목록을 확인하다가 자동으로 연다.
+**시도 기록과 실패 원인**
 
-진행 단계(`bt.progress`: found·authenticate 결과 코드·services·paired의 `permanent`)는 설정 마법사가 기록 파일에 남긴다. 영구 등록 성공 여부는 `paired` 줄의 `"permanent":true`와 3.4의 `authenticated=1`로 판정한다.
-
-**이전 구현에서 실패한 이유(2026-10-20 → 21 분석):**
-
-| 시도 | 결과 | 원인 |
-|---|---|---|
-| `BluetoothAuthenticateDevice` + WCHAR PIN, 실패 시 바로 다음 방식으로 | 31로 실패 | 31은 이 API의 흔한 일시 실패인데 **한 번만 시도**했다. "문자열 변환에서 PIN이 깨진다"고 잘못 판단해 방식을 버렸다. 성공 후 `BluetoothEnumerateInstalledServices` 호출도 없었다 |
-| `BluetoothRegisterForAuthenticationEx` 콜백 + `BluetoothAuthenticateDeviceEx` + `BluetoothSendAuthenticationResponseEx` | 콜백은 레거시 PIN 요청(method 1)으로 불렸으나 응답 후 **인증 함수가 끝나지 않고 멈춤** | 원인 미확인. 응답 함수의 반환값을 기록하지 않아 판단 근거가 없었다. Dolphin도 이 방식은 쓰지 않는다. **사용하지 않는다** |
-| 구조체 배치 의심(`BLUETOOTH_AUTHENTICATE_RESPONSE`) | 가설 기각 | Windows SDK 10.0.26100 헤더로 C 프로그램을 컴파일해 확인: 응답 크기 48, 방식 @8, PIN @12, PIN 길이 @28, 거절 @44 / `BLUETOOTH_DEVICE_INFO` 560, 주소 @8 / 콜백 파라미터 576, 방식 @560, 숫자 @572. 기존 C# 배치와 모두 일치했다 |
-| 인증 없이 HID 서비스 켜기 | 연결 성공 | 임시 연결. Windows 목록에는 남지만 `fAuthenticated=0`이라 리모컨이 다시 찾아오지 않는다 |
+| 날짜 | 시도 | 결과 | 원인·교훈 |
+|---|---|---|---|
+| 10-20 | `BluetoothAuthenticateDevice` + WCHAR PIN | 31 | PIN에 0x00·0x80 이상 바이트가 있다. 문자열 PIN 경로로는 전달되지 않는 것으로 보인다 |
+| 10-20 | 콜백 + `BluetoothSendAuthenticationResponseEx`(라디오 핸들 지정) | 콜백은 방식 1로 불렸으나 인증 함수가 끝나지 않고 멈춤 → 10초 후 임시 연결 성공 | 응답 함수 반환값을 기록하지 않아 원인 불명. 10-22부터 반환값·lastError를 기록하고, 라디오 핸들 대신 NULL로 보낸다 |
+| 10-21 | 구조체 배치 의심 | 가설 기각 | Windows SDK 10.0.26100 헤더로 C 프로그램을 컴파일해 확인: 응답 크기 48, 방식 @8, PIN @12, PIN 길이 @28, 거절 @44 / `BLUETOOTH_DEVICE_INFO` 560, 주소 @8 / 콜백 파라미터 576, 방식 @560, 숫자 @572. C# 배치와 모두 일치 |
+| 10-21 | Dolphin 방식으로 변경: WCHAR PIN 3회 재시도 → 1+2 → 임시 연결(5번째) | **10-22 등록 자체가 실패** | 31은 일시 실패가 아니었고, 실패할 때마다 리모컨 검색 상태가 풀려 임시 연결 순서까지 가지 못했다. 외부 코드의 주석을 이 PC의 실측보다 앞세운 판단 실수 |
+| 10-22 | 콜백(원본 바이트, NULL 라디오) 1회 → 같은 주기에서 바로 임시 연결 | 실물 확인 대기 | 영구 등록이 안 되어도 그제처럼 연결은 된다. 콜백 결과가 기록된다 |
 
 ### 3.3 Windows API 오류 코드 메모
 
 | 코드 | 의미 | 본 상황 |
 |---|---|---|
 | 0 | 성공 | `BluetoothSetServiceState` 성공 |
-| 31 | ERROR_GEN_FAILURE | `BluetoothAuthenticateDevice`의 흔한 일시 실패 → 같은 SYNC 동안 재시도 |
+| 31 | ERROR_GEN_FAILURE | `BluetoothAuthenticateDevice`(WCHAR PIN)가 이 PC에서 매번 반환. 실패 직후 리모컨 검색 상태가 풀린다 |
 | 87 | 잘못된 매개변수 | HID 서비스가 이미 켜져 있을 때도 돌아옴 → 성공으로 취급 |
 | 234 | ERROR_MORE_DATA | 서비스 목록 버퍼 없이 `BluetoothEnumerateInstalledServices`를 부르면 정상적으로 돌아옴 |
-| 259 | ERROR_NO_MORE_ITEMS | 인증 실패 시 나올 수 있음(Dolphin 주석) → 재시도 |
-| 1460 | 시간 초과(게임이 정한 값) | 인증 함수가 8초 안에 끝나지 않음 |
+| 259 | ERROR_NO_MORE_ITEMS | 인증 실패 시 나올 수 있음(Dolphin 주석) |
+| 1460 | 시간 초과(게임이 정한 값) | 인증 함수가 제한 시간(6초) 안에 끝나지 않음 |
 
 ### 3.4 등록 상태 확인 방법 (관리자 권한 불필요)
 
@@ -174,7 +168,7 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 
 ## 11. 미해결 과제 (다음 프로젝트 시작 전에 보면 좋은 것)
 
-1. 영구 등록 실물 확인 — 3.2의 Dolphin 방식으로 바꿨다(2026-10-21). SYNC 1회 → `"permanent":true`·`authenticated=1` → 리모컨 전원 끄기 → 아무 버튼으로 재연결 → PC 재부팅 후 재연결을 확인해야 한다. 실패하면 기록 파일의 `authenticate` 결과 코드로 다음 시도를 정한다.
+1. 영구 등록 실물 확인 — 3.2의 콜백(원본 바이트 PIN) 방식, 2026-10-22. SYNC 1회 → `"permanent":true`·`authenticated=1` → 리모컨 전원 끄기 → 아무 버튼으로 재연결 → PC 재부팅 후 재연결을 확인해야 한다. 실패하면 기록 파일의 `authenticate` 결과 코드로 다음 시도를 정한다.
 2. 콜백 방식(`BluetoothSendAuthenticationResponseEx`)이 멈춘 원인(응답 함수 반환값 미기록).
 3. 11절 기준 정량 측정(9지점 오차, 방아쇠 30회, 센서바 가림).
 4. 배포 패키지(압축 파일 또는 설치 파일)와 정식 코드 서명 인증서.
