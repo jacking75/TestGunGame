@@ -268,7 +268,8 @@ class Runner {
   private updateConnect(): void {
     const pad = this.pad;
     showCross(null, false);
-    if (pad.connected) {
+    // 배터리 값은 연결 직후 첫 상태 보고에 들어오므로 잠시 기다려 결과에 함께 남긴다.
+    if (pad.connected && (pad.info.includes('배터리') || this.stepTime > 2 || SIM)) {
       this.pass({ pass: true, text: `연결됨 · ${pad.info}`, data: { info: pad.info } });
       return;
     }
