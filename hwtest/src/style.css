@@ -1,0 +1,291 @@
+:root {
+  --bg: #101318;
+  --panel: rgba(24, 29, 37, 0.92);
+  --line: rgba(255, 255, 255, 0.14);
+  --text: #f2f4f6;
+  --muted: #aeb6bf;
+  --cyan: #19e3e3;
+  --yellow: #ffd400;
+  --ok: #3ddc84;
+  --bad: #ff5a5a;
+  font-family: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  user-select: none;
+  cursor: default;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+}
+
+/* 위: 단계 표시. 표적(화면 18~20% 안쪽)을 가리지 않도록 높이를 낮게 둔다. */
+header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  z-index: 5;
+}
+
+.brand {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.steps li {
+  padding: 3px 9px;
+  border-radius: 12px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.steps li.now {
+  color: #000;
+  background: var(--yellow);
+  border-color: var(--yellow);
+  font-weight: 700;
+}
+
+.steps li.done {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.steps li.bad {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+/* 지금 할 일 */
+.say {
+  position: absolute;
+  top: 46px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 0 16px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.say h1 {
+  margin: 6px 0 2px;
+  font-size: clamp(22px, 3vw, 38px);
+  text-shadow: 0 2px 6px #000;
+}
+
+.say .sub {
+  margin: 0;
+  font-size: clamp(15px, 1.4vw, 20px);
+  color: var(--muted);
+  text-shadow: 0 1px 4px #000;
+}
+
+.meter {
+  margin-top: 4px;
+  font-size: clamp(18px, 2vw, 28px);
+  font-weight: 700;
+  color: var(--cyan);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px #000;
+}
+
+/* 표적 */
+.target {
+  display: none;
+  position: absolute;
+  width: 70px;
+  height: 70px;
+  margin: -35px 0 0 -35px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, var(--yellow) 0 5px, transparent 6px),
+    radial-gradient(circle, transparent 0 16px, var(--yellow) 17px 20px, transparent 21px),
+    radial-gradient(circle, transparent 0 31px, var(--yellow) 32px 35px, transparent 36px);
+  z-index: 2;
+}
+
+.target.small {
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  background:
+    radial-gradient(circle, var(--yellow) 0 4px, transparent 5px),
+    radial-gradient(circle, transparent 0 19px, var(--yellow) 20px 23px, transparent 24px);
+}
+
+/* 조준점 */
+.cross {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.cross .ring {
+  position: absolute;
+  left: -20px;
+  top: -20px;
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+}
+
+.cross .dot {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  background: var(--cyan);
+  border-radius: 50%;
+}
+
+.cross.lost .ring {
+  border-style: dashed;
+  border-color: #8a9299;
+}
+
+.cross.lost .dot {
+  background: #8a9299;
+}
+
+/* 단계 통과·미달 알림 */
+.flash {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 32px);
+  padding: 18px 28px;
+  border-radius: 12px;
+  font-size: clamp(20px, 2.4vw, 32px);
+  font-weight: 700;
+  text-align: center;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  z-index: 8;
+}
+
+.flash.show {
+  display: block;
+}
+
+.flash.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.flash.bad {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+/* 조준 결과(지점별 오차)와 최종 결과 */
+.result {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.grid > div {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--panel);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid .ok {
+  color: var(--ok);
+}
+
+.grid .bad {
+  color: var(--bad);
+}
+
+.summary {
+  position: absolute;
+  left: 50%;
+  top: 56%;
+  transform: translate(-50%, -50%);
+  width: min(920px, calc(100% - 32px));
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: clamp(15px, 1.4vw, 19px);
+}
+
+.summary th,
+.summary td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.summary th {
+  white-space: nowrap;
+}
+
+.summary tr.ok td:first-child {
+  color: var(--ok);
+}
+
+.summary tr.bad td:first-child,
+.summary tr.bad th {
+  color: var(--bad);
+}
+
+.foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 16px;
+  font-size: 14px;
+  color: var(--muted);
+  text-align: center;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  z-index: 5;
+  overflow-wrap: anywhere;
+}

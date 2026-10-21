@@ -29,3 +29,8 @@ lerna-debug.log*
 # C# host
 /host/bin
 /host/obj
+
+# Wii 총 검증 앱
+/hwtest/dist
+/hwtest/host/bin
+/hwtest/host/obj
