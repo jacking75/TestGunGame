@@ -1,6 +1,6 @@
 # Wii 리모컨 PC 연결과 보정 — 다음 프로젝트용 참고서
 
-이 문서는 TestGunGame에서 **실제로 검증한** Wii 리모컨 등록·연결·IR 조준·보정 방법을 다음 게임에서 바로 재사용하기 위한 정리다. 실패한 방법과 원인도 남긴다. 기준일 2026-10-20(2026-10-21 영구 등록·창 모드·검증 도구 갱신), 검증 환경은 [구현 계획](구현-계획-1.md) 18절 T01(Windows 11 25H2, Intel AX201 계열 내장 블루투스, 정품 RVL-CNT-01, 일반 USB 센서바)이다.
+이 문서는 TestGunGame에서 **실제로 검증한** Wii 리모컨 등록·연결·IR 조준·보정 방법을 다음 게임에서 바로 재사용하기 위한 정리다. 실패한 방법과 원인도 남긴다. 기준일 2026-10-20(2026-10-21 영구 등록·창 모드·검증 도구, 2026-10-22 검증 앱 갱신), 검증 환경은 [구현 계획](구현-계획-1.md) 18절 T01(Windows 11 25H2, Intel AX201 계열 내장 블루투스, 정품 RVL-CNT-01, 일반 USB 센서바)이다.
 
 ## 1. 결론부터 — 이렇게 만들면 된다
 
@@ -62,7 +62,7 @@
    - **바로 이어서** `BluetoothSetServiceState(HID UUID 00001124-…, ENABLE)`로 HID 서비스를 켠다. 인증이 실패했으면 이것이 임시 연결이다.
 5. 게임 쪽 연결 관리자(`WiimoteManager`)가 2초마다 HID 목록을 확인하다가 자동으로 연다.
 
-진행 단계(`bt.progress`: found · auth-response 결과·lastError · authenticate 결과 코드 · services · paired의 `permanent`)는 설정 마법사가 기록 파일에 남긴다. 영구 등록 성공 여부는 `paired` 줄의 `"permanent":true`와 3.4의 `authenticated=1`로 판정한다.
+진행 단계(`bt.progress`: found · auth-response 결과·lastError · authenticate 결과 코드 · services · paired의 `permanent`)는 설정 마법사가 기록 파일에 남긴다. 영구 등록 성공 여부는 `paired` 줄의 `"permanent":true`와 3.4의 `authenticated`가 0이 아닌 값(이 PC: 8)으로 판정한다.
 
 **시도 기록과 실패 원인**
 
@@ -87,7 +87,7 @@
 
 ### 3.4 등록 상태 확인 방법 (관리자 권한 불필요)
 
-`scripts/bt-status.ps1`을 실행한다. PowerShell에서 `bthprops.cpl`의 `BluetoothFindFirstDevice`(inquiry 없이, `fReturnAuthenticated/Remembered/Unknown/Connected = 1`)로 목록을 읽어 `fConnected`·`fRemembered`·`fAuthenticated`를 출력한다. `authenticated=0`이면 Windows 목록에 보여도 영구 등록이 아니다. 연결 키 목록(`HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys`)은 관리자 권한이 있어야 읽을 수 있다.
+`scripts/bt-status.ps1`을 실행한다. PowerShell에서 `bthprops.cpl`의 `BluetoothFindFirstDevice`(inquiry 없이, `fReturnAuthenticated/Remembered/Unknown/Connected = 1`)로 목록을 읽어 `fConnected`·`fRemembered`·`fAuthenticated`를 출력한다. `authenticated=0`이면 Windows 목록에 보여도 영구 등록이 아니다. 값은 플래그 그대로 출력되므로 영구 등록이면 1이 아니라 0이 아닌 값(이 PC: 8)이 나온다. 연결 키 목록(`HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys`)은 관리자 권한이 있어야 읽을 수 있다.
 
 ## 4. HID 송수신 (`host/HidDevices.cs`)
 
@@ -96,7 +96,7 @@
 - 열기: 같은 경로를 **읽기용·쓰기용 핸들 두 개로** 연다. 동기 핸들 하나로 읽기 대기 중에 쓰면 쓰기가 막힌다.
 - 읽기: 별도 스레드에서 `ReadFile` 반복. 첫 바이트가 보고서 번호.
 - 쓰기: 버퍼 길이를 `OutputReportByteLength`(리모컨 22)로 채우고 첫 바이트에 보고서 번호. **`WriteFile` → 실패 시 `HidD_SetOutputReport`** 순서로 시도하고 성공한 방식을 기억한다(스택·모델마다 되는 방식이 다르다).
-- 게임 ↔ 호스트 메시지: `chrome.webview.postMessage` / `PostWebMessageAsJson`. 명령 `hid.list`, `hid.open`, `hid.write`, `hid.close`, `bt.pair`, `bt.cancel`, 알림 `hid.report`, `hid.closed`, `bt.progress`. 약 100Hz 보고서도 문제없다.
+- 게임 ↔ 호스트 메시지: `chrome.webview.postMessage` / `PostWebMessageAsJson`. 명령 `host.info`, `hid.list`, `hid.open`, `hid.write`, `hid.close`, `bt.pair`, `bt.cancel`, `log.append`(검증 앱은 `result.save`, `rec.append` 추가), 알림 `hid.report`, `hid.closed`, `bt.progress`. 약 100Hz 보고서도 문제없다.
 - 리모컨 후보 판별(TypeScript `wiimoteRank`): 정품 VID/PID `057e:0306`(구형)·`057e:0330`(-TR) → 이름 `RVL-CNT`/`Wii Remote` → Nintendo VID의 다른 PID(스위치 컨트롤러·밸런스 보드 제외).
 
 ## 5. 리모컨 초기화와 보고서 (`src/input/wiimote/`)
@@ -142,7 +142,7 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 1. **조작 방식 선택:** Wii 총 / 마우스(마우스는 바로 게임).
 2. **연결:** 1.5초 동안 기존 연결을 기다린 뒤, 게임 실행 파일이면 자동으로 등록을 시작하고 "리모컨의 아무 버튼이나 누르세요(처음이면 빨간 SYNC 버튼)"만 보여 준다. 진행 단계(찾는 중 → 발견, n번째 시도 → 등록 완료 / 등록된 리모컨 대기)를 표시한다. 일반 브라우저면 Windows 등록 안내 + 장치 선택 창.
 3. **센서바:** 양 끝이 1초 동안 계속 보이면 통과. 6초 안에 안 보이면 원인 안내(USB 전원, 방향, 거리, 햇빛).
-4. **버튼 학습(처음 한 번):** "방아쇠를 당기세요 → 엄폐 버튼 → + 버튼" 순서로 **실제로 눌린 버튼을 저장**한다(실측: 발사 B, 엄폐 2, 일시정지 +). 같은 버튼 중복은 무시. 이 단계에서는 리모컨으로 화면 버튼을 누르는 기능과 조준점 표시를 끈다.
+4. **버튼 학습(처음 한 번):** "방아쇠를 당기세요 → 엄폐 버튼 → + 버튼" 순서로 **실제로 눌린 버튼을 저장**한다(실측: 10-20 발사 B·엄폐 2·일시정지 +, 10-21 발사 B·엄폐 A·일시정지 + — 사람마다 다르게 고르므로 고정하지 않고 학습한다). 같은 버튼 중복은 무시. 이 단계에서는 리모컨으로 화면 버튼을 누르는 기능과 조준점 표시를 끈다.
 5. **보정** → 게임. 두 번째 실행부터는 연결·센서바 확인만 자동으로 거친다.
 
 ## 9. 개발할 때 쓰는 도구
@@ -152,7 +152,7 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 - F3 진단 화면: 조준 원본·최종 좌표, 프레임 시간, 리모컨 상태, IR 카메라 미리보기, 입력 장치 고정, 평활화 켜기·끄기.
 - 배포 실행 파일 자동 검증: `npm run verify:exe`(`scripts/verify-exe.mjs`). 환경 변수 `WEBVIEW2_USER_DATA_FOLDER`(임시 프로필)·`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=25003`·`TGG_LOG_DIR`로 실행 파일을 띄우고, DevTools 프로토콜로 실제 마우스·키 입력을 보낸다. 게임 내부를 읽지 않고 화면 픽셀(주황 로봇·노란 경고)과 HUD 글자만으로 끝까지 플레이한다. 디버깅 포트는 이 스크립트 실행 때만 열린다.
 - 블루투스 등록 상태: `scripts/bt-status.ps1`(3.4).
-- **Wii 총 검증 앱(`hwtest/`, 2026-10-21):** 게임과 별개의 실행 파일. 사람이 외울 것 없이 화면 지시만 따라 하면 연결·센서바·보정·조준 정확도·방아쇠 중복·엄폐 버튼·센서바 가림·창 전환을 차례로 재고 결과 JSON을 남긴다. C# 쪽은 `host/`의 등록·HID 파일을 링크해 쓰므로 다음 게임에서도 그대로 쓸 수 있다. 각 단계는 장치 상태를 감지해 스스로 넘어간다(버튼으로 다음을 누르게 하지 않는다). 리모컨 없이 흐름을 확인하는 모의 입력(`--sim`)과 자동 확인 스크립트(`scripts/verify-hwtest.mjs`)가 있다. 모의 입력에서 mousemove는 화면 갱신에 맞춰 늦게 오므로 눌린 순간의 위치는 mousedown 이벤트 좌표로 잡아야 한다.
+- **Wii 총 검증 앱(`hwtest/`, 2026-10-21 만듦, 2026-10-22 16단계로 확장):** 게임과 별개의 실행 파일. 사람이 외울 것 없이 화면 지시만 따라 하면 실물 확인을 한 번에 끝낸다: 연결 → LED·진동·소리(예 = 방아쇠, 아니요 = A) → 센서바 → 보정 → 조준(조준점·가늠쇠·한 걸음 뒤) → 방아쇠 → 버튼(A, + − HOME, 십자, 1·2) → 센서바 가림·발사 막힘 → 비틀기 → 십자 누른 채 사격 → 실전 사격(탄창·장전·일시정지) → 창 전환 → 전원·재연결 → 결과. 결과 JSON·기록과 함께 **리모컨 보고 전체를 녹화**(`recordings\*.jsonl`: 시각·버튼 비트·IR 점)해, 게임 쪽 확인을 실물 없이 자동 검증에 쓴다. C# 쪽은 `host/`의 등록·HID 파일을 링크해 쓰므로 다음 게임에서도 그대로 쓸 수 있다. 각 단계는 장치 상태를 감지해 스스로 넘어가고(버튼으로 다음을 누르게 하지 않는다), HOME을 1.5초 누르면 그 단계를 다시 한다. 리모컨 없이 흐름을 확인하는 모의 입력(`--sim`)과 자동 확인 스크립트(`scripts/verify-hwtest.mjs`)가 있다. 모의 입력에서 mousemove는 화면 갱신에 맞춰 늦게 오므로 눌린 순간의 위치는 mousedown 이벤트 좌표로 잡아야 한다. 사용자가 모니터 1대라 게임을 하면서 터미널 지시를 읽을 수 없다는 점이 이 앱을 만든 이유다.
 - 게임 안 **정확도 측정**(시작 화면): 9지점 × 3발 오차, 방아쇠 10회 + 길게 누르기, 센서바 가림·전원 끄기·재연결 시간. 결과는 기록 파일의 `accuracy-result`·`trigger-result`·`loss-event`.
 - 리모컨 없이 시험: 페이지에 가짜 HID 장치(레지스터 쓰기에 0x22로 답하고 0x33 보고서를 보내는 객체)를 넣어 마법사·보정·전투를 끝까지 돌린다(`tests/wiimote-device.test.ts` 참고).
 
@@ -172,6 +172,6 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 
 1. 영구 등록·재연결은 해결(2026-10-21, 3.2): SYNC 1회 영구 등록 → 전원 끄기·게임 재실행·PC 재부팅 후 아무 버튼 연결 확인. 남은 것: 게임을 켜지 않으면 버튼을 눌러도 Windows에 연결되지 않는 원인(게임 전용으로는 문제없음). 콜백 방식이 멈춘 원인은 응답 함수의 라디오 핸들 인자로 좁혔다(3.2 표, 1회 성공 기준).
 2. 기록 파일의 `t`는 UTC다. 문서에 옮길 때 한국 시간(+9)으로 바꾼다(2026-10-21 문서 날짜를 하루 늦게 적은 실수가 있었다).
-3. 11절 기준 정량 측정(9지점 × 3발 오차, 방아쇠 10회, 센서바 가림). 가늠쇠만으로 측정·3회 연속 완주는 시간 때문에 미측정.
+3. 실물 정량 측정: 1차(2026-10-22, 검증 앱 8항목) 모두 통과 — 조준점 9곳 × 3발 90백분위 2.57%(기준 3%), 가장자리(좌상·하중) 지점별 3% 초과로 여유가 작다. 가늠쇠만·거리 변화·비틀기·실전 사격·십자 동시 조작은 마지막 실물 테스트(16단계)에서 잰다. 게임 레일 스테이지의 Wii 완주는 그 녹화를 재생하는 자동 검증으로 대신하며, 사람 손의 실제 조준 궤적은 재현하지 못한다.
 4. 배포 패키지(압축 파일 또는 설치 파일)와 정식 코드 서명 인증서.
 5. 2인용: HID 장치별로 `WiimoteSource`를 하나씩 두면 된다(구조상 가능, 미구현).
