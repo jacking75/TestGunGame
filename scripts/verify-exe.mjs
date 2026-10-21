@@ -328,13 +328,15 @@ async function main() {
     await waitFor(c, `__v.hud().screen === ''`, 2000, '재개');
     check('Esc 일시정지 → 재개', true);
 
-    // 5) 전체 화면(1080p) 진입. 실행 파일은 전체 화면 요청 시 테두리 없는 창으로 바꾼다.
-    await c.eval(`document.documentElement.requestFullscreen()`, true);
-    await sleep(800);
-    const fs1 = await hud();
-    check('전체 화면 진입·게임 영역 크기', fs1.fullscreen && fs1.canvas.cw === fs1.vw && fs1.canvas.ch === fs1.vh, `${fs1.vw}×${fs1.vh}, 캔버스 ${fs1.canvas.w}×${fs1.canvas.h}`);
-    result.fullscreen = { vw: fs1.vw, vh: fs1.vh, canvas: fs1.canvas };
-    await checkAim(c, '전체 화면', check);
+    // 5) 창 모드: 게임은 작업 표시줄을 가리지 않는 최대화 창으로 실행된다(전체 화면을 요청하지 않는다).
+    const win = await c.eval(`({ outerBottom: screenY + outerHeight, availBottom: (screen.availTop ?? 0) + screen.availHeight, screenH: screen.height, vw: innerWidth, vh: innerHeight })`);
+    const cv = (await hud()).canvas;
+    check(
+      '작업 표시줄이 보이는 창 · 게임 영역 = 창 크기',
+      win.outerBottom <= win.availBottom + 8 && win.availBottom < win.screenH && cv.cw === win.vw && cv.ch === win.vh,
+      `창 아래 ${win.outerBottom}px ≤ 작업 영역 ${win.availBottom}px (화면 ${win.screenH}px) · 캔버스 ${cv.w}×${cv.h}`,
+    );
+    result.window = { ...result.window, ...win, canvas: cv };
     await sleep(2500);
     await shot(c, '05-combat');
     result.firstScan = await c.eval('__v.scan()');
@@ -352,10 +354,10 @@ async function main() {
       const r = await hud();
       check(`판 ${i + 1} 후 다시 도전 초기화`, r.ammo === '6/6' && r.hp === 5 && r.time.includes('3:00'), `${r.ammo} hp${r.hp} ${r.time}`);
     }
-    // 성능: 전체 화면(1080p) 전투 중 프레임 시간. 화면 인식으로 픽셀을 읽은 직후 프레임은 제외한다.
+    // 성능: 최대화 창(1920×1009) 전투 중 프레임 시간. 화면 인식으로 픽셀을 읽은 직후 프레임은 제외한다.
     result.perf = summarize(allFrames);
     if (RUNS > 0)
-      check('성능: 1080p 프레임 시간 95백분위 20ms 이하, 측정 60초 이상', result.perf.p95Ms <= 20 && result.perf.totalSec >= 60, JSON.stringify(result.perf));
+      check('성능: 최대화 창 프레임 시간 95백분위 20ms 이하, 측정 60초 이상', result.perf.p95Ms <= 20 && result.perf.totalSec >= 60, JSON.stringify(result.perf));
 
     // 7) 실패: 엄폐하지 않고 버틴다 → 임무 실패 → 다시 도전
     const failT0 = Date.now();
@@ -368,14 +370,7 @@ async function main() {
     const rf = await hud();
     check('실패 후 다시 도전 초기화', rf.ammo === '6/6' && rf.hp === 5, `${rf.ammo} hp${rf.hp} ${rf.time}`);
 
-    // 8) 전체 화면 해제 → 일시정지
-    await c.eval(`document.exitFullscreen()`, true);
-    await waitFor(c, `__v.hud().screen === '일시정지'`, 3000, '전체 화면 해제 일시정지');
     const fs2 = await hud();
-    check('전체 화면 해제 시 일시정지·창 크기 복귀', !fs2.fullscreen && fs2.screenText.includes('전체 화면'), `${fs2.vw}×${fs2.vh}`);
-    await clickButton(c, '재개');
-    await sleep(300);
-    await checkAim(c, '전체 화면 해제 후', check);
 
     // 9) 포커스 상실: 엄폐·방아쇠를 누른 채 창이 포커스를 잃는다 → 일시정지 → 재개 후 고착 없음
     await move(c, fs2.vw * 0.5, fs2.vh * 0.1);

@@ -1,13 +1,13 @@
 # Wii 리모컨 PC 연결과 보정 — 다음 프로젝트용 참고서
 
-이 문서는 TestGunGame에서 **실제로 검증한** Wii 리모컨 등록·연결·IR 조준·보정 방법을 다음 게임에서 바로 재사용하기 위한 정리다. 실패한 방법과 원인도 남긴다. 기준일 2026-10-20, 검증 환경은 [구현 계획](구현-계획-1.md) 18절 T01(Windows 11 25H2, Intel AX201 계열 내장 블루투스, 정품 RVL-CNT-01, 일반 USB 센서바)이다.
+이 문서는 TestGunGame에서 **실제로 검증한** Wii 리모컨 등록·연결·IR 조준·보정 방법을 다음 게임에서 바로 재사용하기 위한 정리다. 실패한 방법과 원인도 남긴다. 기준일 2026-10-20(2026-10-21 영구 등록·창 모드·검증 도구 갱신), 검증 환경은 [구현 계획](구현-계획-1.md) 18절 T01(Windows 11 25H2, Intel AX201 계열 내장 블루투스, 정품 RVL-CNT-01, 일반 USB 센서바)이다.
 
 ## 1. 결론부터 — 이렇게 만들면 된다
 
 | 항목 | 채택한 방식 | 재사용할 코드 |
 |---|---|---|
-| 배포 형태 | 작은 Windows 실행 파일(C# .NET Framework 4.8 + WebView2) 안에 웹 게임을 띄운다 | `host/` 전체 |
-| 리모컨 등록 | 게임 안에서 Windows 블루투스 API로 직접 등록. 사용자는 **SYNC 버튼만** 누른다 | `host/WiimotePairing.cs`, `host/Native.cs` |
+| 배포 형태 | 작은 Windows 실행 파일(C# .NET Framework 4.8 + WebView2) 안에 웹 게임을 띄운다. **작업 표시줄이 보이는 최대화 창**으로 실행하고 전체 화면으로 바꾸지 않는다(10절) | `host/` 전체 |
+| 리모컨 등록 | 게임 안에서 Windows 블루투스 API로 직접 등록. 사용자는 **처음 한 번 SYNC 버튼만** 누르고, 이후에는 아무 버튼으로 연결된다(3.2, 실물 재확인 대기) | `host/WiimotePairing.cs`, `host/Native.cs` |
 | 데이터 송수신 | C#이 HID 원본 바이트만 주고받고, 해석은 TypeScript가 한다 | `host/HidDevices.cs`, `src/input/wiimote/hid.ts` |
 | 프로토콜 | IR 확장 모드 + 연속 보고(0x12 `04 33`) | `src/input/wiimote/protocol.ts`, `WiimoteDevice.ts` |
 | 조준 계산 | IR 점 묶기 → 양 끝 중점 → 비틀림 보정 → 평활화 | `src/input/wiimote/IrPointer.ts`, `src/input/OneEuroFilter.ts` |
@@ -41,40 +41,58 @@
 ### 3.1 반드시 알아야 할 것
 
 - Wii 리모컨 PIN은 숫자가 아니라 **6바이트 주소**다.
-  - SYNC 버튼(배터리 칸 빨간 버튼)으로 등록: **PC 블루투스 주소를 거꾸로 한 6바이트**. 영구 등록이 되어 이후 아무 버튼으로 깨울 수 있다.
-  - 1+2 버튼으로 등록: **리모컨 주소를 거꾸로 한 6바이트**. 임시 연결.
+  - SYNC 버튼(배터리 칸 빨간 버튼)으로 등록: **PC 블루투스 주소를 거꾸로 한 6바이트**. 성공하면 리모컨이 PC 주소를 기억해, 이후 **아무 버튼만 눌러도 리모컨이 PC에 스스로 연결**한다(PC 재부팅 후에도).
+  - 1+2 버튼으로 등록: **리모컨 주소를 거꾸로 한 6바이트**. 리모컨이 PC를 기억하지 않으므로 다음에도 1+2·SYNC가 필요하다. 잘못된 방식의 PIN을 보내면 Windows가 리모컨 연결을 바로 끊는다(Dolphin 주석).
   - `BLUETOOTH_ADDRESS`의 `ulong`을 `BitConverter.GetBytes()`로 꺼낸 낮은 6바이트가 곧 "거꾸로 한 순서"다.
-- PIN 바이트에는 0x00과 0x80 이상 값이 흔히 들어간다(이 PC: `17 00 9C 4A 55 8C`). **문자열(WCHAR) PIN을 받는 `BluetoothAuthenticateDevice`는 이 값을 깨뜨려 오류 31로 실패한다.**
+- PIN 바이트에는 0x00과 0x80 이상 값이 흔히 들어간다(이 PC: `17 00 9C 4A 55 8C`). 바이트 하나를 WCHAR 하나로 담아 **`BluetoothAuthenticateDevice(…, WCHAR[6], 6)`**에 그대로 넘긴다(Dolphin·WiiPair와 같은 방식, 0x00도 길이로 전달되므로 문제없다).
+- **Windows 설정의 블루투스 목록에 보이는 것 ≠ 영구 등록.** 인증 없이 HID 서비스만 켜도 Windows는 장치를 목록에 기억(`fRemembered`)한다. 영구 등록 여부는 `fAuthenticated`(연결 키 보유)로만 판단한다. 2026-10-21 이 PC의 리모컨은 목록에 있었지만 `remembered=16, authenticated=0`이었다(3.4의 확인 방법). 인증 없이 기억만 된 항목은 다시 연결할 방법이 없으므로 지우고 새로 등록해야 한다.
 - 정품 리모컨의 제조사 주소 앞자리는 `00:25:A0` 등 Nintendo OUI다. 검색 직후에는 **이름이 비어 있을 수 있다** → 이름만으로 찾으면 놓친다. 장치 종류(CoD `0x002504`: 주변기기/조이스틱)로도 찾아야 한다.
 - 리모컨이 검색 가능한 시간은 SYNC를 누른 뒤 약 20초(LED 깜박임). 실패하면 다시 눌러야 한다.
 
-### 3.2 시도 순서 (`host/WiimotePairing.cs`)
+### 3.2 등록 순서 (`host/WiimotePairing.cs`, 2026-10-21 Dolphin 방식으로 변경)
 
-1. 이전에 등록하다 실패해 남은 항목(`fRemembered && !fAuthenticated`)을 `BluetoothRemoveDevice`로 지운다.
+근거: 현재 유지보수 중인 [Dolphin `IOWin.cpp`](https://github.com/dolphin-emu/dolphin/blob/master/Source/Core/Core/HW/WiimoteReal/IOWin.cpp)의 `FindAndAuthenticateWiimotes`·`AuthenticateWiimote`와 [WiiPair](https://github.com/jordanbtucker/WiiPair).
+
+1. 인증 없이 기억만 된 항목(`fRemembered && !fAuthenticated`)을 `BluetoothRemoveDevice`로 지운다.
 2. `BluetoothFindFirstDevice`(inquiry, timeout 배수 2 ≈ 2.56초)를 반복하며 후보를 찾는다.
    - 후보 순위: 이름 `Nintendo RVL-CNT*` → 이름에 RVL/Nintendo/Wii → 이름 없는 조이스틱·게임패드 CoD. 밸런스 보드(`RVL-WBC`)는 제외.
-3. 이미 인증된 장치면 HID 서비스만 다시 켠다. 안 되면 지우고 새로 등록.
-4. 장치마다 아래 방식을 차례로 시도한다(각 10초 제한).
+3. 이미 인증된(영구 등록된) 장치면 HID 서비스만 켜 두고 기다린다. 사용자가 리모컨 버튼을 누르면 리모컨이 스스로 연결한다. **꺼져 있다고 등록을 지우지 않는다**(지우면 SYNC가 다시 필요해진다).
+4. 인증 안 된 장치는 검색될 때마다 아래 순서로 한 번씩 시도한다(인증 함수는 8초 제한).
 
-| 순서 | 방식 | 이 PC 결과 |
+| 순서 | 방식 | 설명 |
 |---|---|---|
-| ① | SYNC PIN(PC 주소 역순) — `BluetoothRegisterForAuthenticationEx` 콜백 + `BluetoothAuthenticateDeviceEx` | 콜백은 레거시 PIN 요청(method 1)으로 호출됐지만 응답 후 **완료되지 않고 멈춤** → 10초 제한으로 넘어감 |
-| ② | **인증 없이 HID 서비스 켜기** — `BluetoothSetServiceState(HID UUID 00001124-…, ENABLE)` | **성공.** 2초 안에 Windows가 HID 장치를 만들고 바로 연결됨 |
-| ③ | 1+2 PIN(리모컨 주소 역순) | 미도달 |
-| ④ | `"0000"`(일부 호환품) | 미도달 |
+| 1~3회 | SYNC PIN(PC 주소 역순) — `BluetoothAuthenticateDevice` | Windows가 자주 **31(ERROR_GEN_FAILURE)** 또는 259(ERROR_NO_MORE_ITEMS)로 실패시키므로 같은 SYNC 동안 다시 시도한다(Dolphin은 검색·인증을 3회 반복) |
+| 4회 | 1+2 PIN(리모컨 주소 역순) | 사용자가 1+2로 검색 상태를 만든 경우 |
+| 5회 | 인증 없이 HID 서비스 켜기 | 임시 연결. 게임은 쓸 수 있지만 다음에 다시 SYNC가 필요하다 |
 
-5. 성공하면 게임 쪽 연결 관리자(`WiimoteManager`)가 2초마다 HID 목록을 확인하다가 자동으로 연다.
+5. 인증에 성공하면 **`BluetoothEnumerateInstalledServices(radio, &btdi, &count, NULL)`을 호출한다.** Dolphin·WiiPair 모두 "이 호출을 하지 않으면 리모컨이 등록을 기억하지 않는다"고 적어 두었다(234 ERROR_MORE_DATA도 정상).
+6. `BluetoothSetServiceState(HID UUID 00001124-…, ENABLE)`로 HID 서비스를 켠다. 성공하면 게임 쪽 연결 관리자(`WiimoteManager`)가 2초마다 HID 목록을 확인하다가 자동으로 연다.
 
-> **주의:** ②는 임시 연결이라 PC·게임을 다시 켜면 SYNC를 다시 눌러야 할 수 있다. 영구 등록(①)이 멈추는 원인은 미해결이다. 의심 지점은 `BLUETOOTH_AUTHENTICATE_RESPONSE` 구조체 배치(`Native.BuildAuthResponse`: 주소 8 · 방식 4 · 공용체 32[PIN 16 + 길이 1] · 거절 1 = 48바이트)다. 다음 프로젝트에서 먼저 확인할 것.
+진행 단계(`bt.progress`: found·authenticate 결과 코드·services·paired의 `permanent`)는 설정 마법사가 기록 파일에 남긴다. 영구 등록 성공 여부는 `paired` 줄의 `"permanent":true`와 3.4의 `authenticated=1`로 판정한다.
+
+**이전 구현에서 실패한 이유(2026-10-20 → 21 분석):**
+
+| 시도 | 결과 | 원인 |
+|---|---|---|
+| `BluetoothAuthenticateDevice` + WCHAR PIN, 실패 시 바로 다음 방식으로 | 31로 실패 | 31은 이 API의 흔한 일시 실패인데 **한 번만 시도**했다. "문자열 변환에서 PIN이 깨진다"고 잘못 판단해 방식을 버렸다. 성공 후 `BluetoothEnumerateInstalledServices` 호출도 없었다 |
+| `BluetoothRegisterForAuthenticationEx` 콜백 + `BluetoothAuthenticateDeviceEx` + `BluetoothSendAuthenticationResponseEx` | 콜백은 레거시 PIN 요청(method 1)으로 불렸으나 응답 후 **인증 함수가 끝나지 않고 멈춤** | 원인 미확인. 응답 함수의 반환값을 기록하지 않아 판단 근거가 없었다. Dolphin도 이 방식은 쓰지 않는다. **사용하지 않는다** |
+| 구조체 배치 의심(`BLUETOOTH_AUTHENTICATE_RESPONSE`) | 가설 기각 | Windows SDK 10.0.26100 헤더로 C 프로그램을 컴파일해 확인: 응답 크기 48, 방식 @8, PIN @12, PIN 길이 @28, 거절 @44 / `BLUETOOTH_DEVICE_INFO` 560, 주소 @8 / 콜백 파라미터 576, 방식 @560, 숫자 @572. 기존 C# 배치와 모두 일치했다 |
+| 인증 없이 HID 서비스 켜기 | 연결 성공 | 임시 연결. Windows 목록에는 남지만 `fAuthenticated=0`이라 리모컨이 다시 찾아오지 않는다 |
 
 ### 3.3 Windows API 오류 코드 메모
 
 | 코드 | 의미 | 본 상황 |
 |---|---|---|
 | 0 | 성공 | `BluetoothSetServiceState` 성공 |
-| 31 | ERROR_GEN_FAILURE | 문자열 PIN으로 인증 시 |
+| 31 | ERROR_GEN_FAILURE | `BluetoothAuthenticateDevice`의 흔한 일시 실패 → 같은 SYNC 동안 재시도 |
 | 87 | 잘못된 매개변수 | HID 서비스가 이미 켜져 있을 때도 돌아옴 → 성공으로 취급 |
-| 1460 | 시간 초과(게임이 정한 값) | 인증 함수가 10초 안에 끝나지 않음 |
+| 234 | ERROR_MORE_DATA | 서비스 목록 버퍼 없이 `BluetoothEnumerateInstalledServices`를 부르면 정상적으로 돌아옴 |
+| 259 | ERROR_NO_MORE_ITEMS | 인증 실패 시 나올 수 있음(Dolphin 주석) → 재시도 |
+| 1460 | 시간 초과(게임이 정한 값) | 인증 함수가 8초 안에 끝나지 않음 |
+
+### 3.4 등록 상태 확인 방법 (관리자 권한 불필요)
+
+`scripts/bt-status.ps1`을 실행한다. PowerShell에서 `bthprops.cpl`의 `BluetoothFindFirstDevice`(inquiry 없이, `fReturnAuthenticated/Remembered/Unknown/Connected = 1`)로 목록을 읽어 `fConnected`·`fRemembered`·`fAuthenticated`를 출력한다. `authenticated=0`이면 Windows 목록에 보여도 영구 등록이 아니다. 연결 키 목록(`HKLM\SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Keys`)은 관리자 권한이 있어야 읽을 수 있다.
 
 ## 4. HID 송수신 (`host/HidDevices.cs`)
 
@@ -127,7 +145,7 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 ## 8. 설정 마법사 흐름 (`SetupWizard.ts`)
 
 1. **조작 방식 선택:** Wii 총 / 마우스(마우스는 바로 게임).
-2. **연결:** 1.5초 동안 기존 연결을 기다린 뒤, 게임 실행 파일이면 자동으로 등록을 시작하고 "빨간 SYNC 버튼을 누르세요"만 보여 준다. 진행 단계(찾는 중 → 발견, n번째 방식 → 등록 완료)를 표시한다. 일반 브라우저면 Windows 등록 안내 + 장치 선택 창.
+2. **연결:** 1.5초 동안 기존 연결을 기다린 뒤, 게임 실행 파일이면 자동으로 등록을 시작하고 "리모컨의 아무 버튼이나 누르세요(처음이면 빨간 SYNC 버튼)"만 보여 준다. 진행 단계(찾는 중 → 발견, n번째 시도 → 등록 완료 / 등록된 리모컨 대기)를 표시한다. 일반 브라우저면 Windows 등록 안내 + 장치 선택 창.
 3. **센서바:** 양 끝이 1초 동안 계속 보이면 통과. 6초 안에 안 보이면 원인 안내(USB 전원, 방향, 거리, 햇빛).
 4. **버튼 학습(처음 한 번):** "방아쇠를 당기세요 → 엄폐 버튼 → + 버튼" 순서로 **실제로 눌린 버튼을 저장**한다(실측: 발사 B, 엄폐 2, 일시정지 +). 같은 버튼 중복은 무시. 이 단계에서는 리모컨으로 화면 버튼을 누르는 기능과 조준점 표시를 끈다.
 5. **보정** → 게임. 두 번째 실행부터는 연결·센서바 확인만 자동으로 거친다.
@@ -135,9 +153,11 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 ## 9. 개발할 때 쓰는 도구
 
 - `npm run dev`(25001) + `npm run app:dev`: 개발 서버를 게임 실행 파일로 연다. F12 개발자 도구.
-- `logs/hw-check.log`(개발 서버 전용): 페이지 시작, 전체 HID 목록, 리모컨 후보, 연결 상태 변화, 등록 단계별 결과(`bt.progress`), 버튼 눌림, 1초마다 상태(보고 빈도, 배터리, IR 설정, 점 좌표, 추적 상태, 조준 좌표). **실물 문제는 거의 이 기록만으로 원인을 찾았다.**
+- `hw-check.log`(개발 서버는 저장소 `logs/`, 배포 실행 파일은 `%LOCALAPPDATA%<게임>logs/`): 페이지 시작, 전체 HID 목록, 리모컨 후보, 연결 상태 변화, 등록 단계별 결과(`bt.progress`), 버튼 눌림, 1초마다 상태(보고 빈도, 배터리, IR 설정, 점 좌표, 추적 상태, 조준 좌표), 판 시작·결과, 일시정지 사유, 보정·정확도 측정 결과. **실물 문제는 거의 이 기록만으로 원인을 찾았다.**
 - F3 진단 화면: 조준 원본·최종 좌표, 프레임 시간, 리모컨 상태, IR 카메라 미리보기, 입력 장치 고정, 평활화 켜기·끄기.
-- 실행 중인 배포 빌드 검사: `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=25004`로 실행하면 DevTools 프로토콜로 창 내부를 확인할 수 있다.
+- 배포 실행 파일 자동 검증: `npm run verify:exe`(`scripts/verify-exe.mjs`). 환경 변수 `WEBVIEW2_USER_DATA_FOLDER`(임시 프로필)·`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=25003`·`TGG_LOG_DIR`로 실행 파일을 띄우고, DevTools 프로토콜로 실제 마우스·키 입력을 보낸다. 게임 내부를 읽지 않고 화면 픽셀(주황 로봇·노란 경고)과 HUD 글자만으로 끝까지 플레이한다. 디버깅 포트는 이 스크립트 실행 때만 열린다.
+- 블루투스 등록 상태: `scripts/bt-status.ps1`(3.4).
+- 게임 안 **정확도 측정**(시작 화면): 9지점 × 10발 오차, 방아쇠 30회 + 길게 누르기, 센서바 가림·전원 끄기·재연결 시간. 결과는 기록 파일의 `accuracy-result`·`trigger-result`·`loss-event`.
 - 리모컨 없이 시험: 페이지에 가짜 HID 장치(레지스터 쓰기에 0x22로 답하고 0x33 보고서를 보내는 객체)를 넣어 마법사·보정·전투를 끝까지 돌린다(`tests/wiimote-device.test.ts` 참고).
 
 ## 10. 그 밖에 걸렸던 것
@@ -148,10 +168,14 @@ IR 확장 형식(점 4개 × 3바이트): `x = b0 | ((b2>>4)&3)<<8`, `y = b1 | (
 - 블루투스 마우스 등 다른 포인팅 장치가 있어도 입력 계층이 마지막에 쓴 장치를 조준에 쓰므로, Wii를 고르면 입력 장치를 Wii로 고정한다.
 - 게임 중 리모컨 연결이 끊기면 일시정지하고, 다시 연결되면 이어서 할 수 있다. 포커스 복귀 후에는 누르고 있던 버튼을 한 번 놓아야 다시 동작한다(오발사·엄폐 고착 방지).
 
+- **창 모드:** 게임 창은 작업 표시줄을 가리지 않는 최대화 창(이 PC 1920×1009)이다. WebView2의 `ContainsFullScreenElementChanged`에서 창을 테두리 없이 최대화하면 작업 표시줄까지 덮으므로 처리하지 않는다. HTML 전체 화면 요청이 와도 WebView 영역 안에서만 채워진다. 사용자가 작업 표시줄이 가려지는 것을 강하게 싫어했다(2026-10-21).
+- 검증 스크립트에서 화면 픽셀을 읽을 때 `requestAnimationFrame` 안에서 WebGL 캔버스를 2D 캔버스에 그리면 `preserveDrawingBuffer` 없이도 방금 그린 프레임을 얻는다. 이 읽기는 GPU를 멈추므로 성능 측정에서 그 직후 프레임은 뺀다.
+- 짧은 키 입력(1프레임 미만)은 프레임마다 누름 상태를 보는 처리에서 놓친다. 자동 검증은 150ms 이상 누른다.
+
 ## 11. 미해결 과제 (다음 프로젝트 시작 전에 보면 좋은 것)
 
-1. 영구 등록(SYNC PIN) 완료 — 3.2의 주의 참고. 되면 다음부터 아무 버튼으로 자동 연결된다.
-2. 전원 끄기·켜기, 게임 재실행 후 재연결 확인.
+1. 영구 등록 실물 확인 — 3.2의 Dolphin 방식으로 바꿨다(2026-10-21). SYNC 1회 → `"permanent":true`·`authenticated=1` → 리모컨 전원 끄기 → 아무 버튼으로 재연결 → PC 재부팅 후 재연결을 확인해야 한다. 실패하면 기록 파일의 `authenticate` 결과 코드로 다음 시도를 정한다.
+2. 콜백 방식(`BluetoothSendAuthenticationResponseEx`)이 멈춘 원인(응답 함수 반환값 미기록).
 3. 11절 기준 정량 측정(9지점 오차, 방아쇠 30회, 센서바 가림).
 4. 배포 패키지(압축 파일 또는 설치 파일)와 정식 코드 서명 인증서.
 5. 2인용: HID 장치별로 `WiimoteSource`를 하나씩 두면 된다(구조상 가능, 미구현).

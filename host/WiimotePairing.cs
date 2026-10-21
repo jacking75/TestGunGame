@@ -1,22 +1,31 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using System.Threading;
+using System.Threading.Tasks;
 
 namespace TestGunGame.Host
 {
     /// <summary>
     /// Wii 리모컨(및 호환품)을 Windows 블루투스에 등록한다. Windows 설정 창은 PIN을 요구하지만
-    /// Wii 리모컨 PIN은 블루투스 주소 6바이트라 키보드로 넣을 수 없다. 흔한 방식부터 차례로 시도한다.
-    ///   방식: ① SYNC PIN(PC 주소 역순, 영구 등록) → ② 인증 없이 HID 연결(임시, 매번 자동 재연결)
-    ///         → ③ 1+2 PIN(리모컨 주소 역순) → ④ "0000"(일부 호환품). 각 시도는 제한 시간을 넘기면 다음으로 넘어간다.
+    /// Wii 리모컨 PIN은 블루투스 주소 6바이트라 키보드로 넣을 수 없어 게임이 직접 등록한다.
+    ///
+    /// 영구 등록(Dolphin IOWin.cpp와 같은 순서, 2026-10-21 정리):
+    ///   ① 인증 없이 목록에만 남은 항목을 지운다(그대로 두면 다시 연결할 방법이 없다).
+    ///   ② SYNC 버튼으로 검색 상태가 된 리모컨에 PIN = PC 블루투스 주소 6바이트(낮은 바이트부터)를
+    ///      바이트당 WCHAR 1개로 BluetoothAuthenticateDevice에 보낸다. 0x00·0x80 이상 값도 그대로 보낸다.
+    ///      Windows는 이 호출을 자주 ERROR_GEN_FAILURE(31)로 실패시키므로 같은 SYNC 동안 여러 번 다시 시도한다.
+    ///   ③ 성공하면 BluetoothEnumerateInstalledServices를 호출한다. 이걸 하지 않으면 리모컨이 등록을 기억하지 않는다.
+    ///   ④ HID 서비스를 켠다.
+    ///   이후에는 리모컨의 아무 버튼이나 누르면 리모컨이 PC에 스스로 연결한다(PC 재부팅 후에도).
+    /// 영구 등록이 끝내 안 되면 인증 없이 HID만 켜는 임시 연결로 게임은 계속 쓸 수 있게 한다(이때는 매번 SYNC 필요).
     ///   장치: ① 이름 "Nintendo RVL-CNT" → ② 이름에 RVL·Nintendo·Wii → ③ 이름 없는 조이스틱·게임패드 종류 장치
     /// </summary>
     internal sealed class WiimotePairing
     {
-        private static readonly string[] PinMethods = { "sync", "direct", "one-two", "0000" };
+        /// <summary>한 리모컨에 시도하는 순서. 1+2로 검색 상태가 된 리모컨은 SYNC PIN이 실패하므로 그다음 1+2 PIN을 쓴다.</summary>
+        private static readonly string[] Methods = { "sync", "sync", "sync", "one-two", "direct" };
         /// <summary>등록 함수가 응답하지 않을 때 기다리는 최대 시간</summary>
-        private const int AuthTimeoutMs = 10000;
+        private const int AuthTimeoutMs = 8000;
         private const int ERROR_SUCCESS = 0;
 
         private readonly Action<Dictionary<string, object>> progress;
@@ -59,34 +68,35 @@ namespace TestGunGame.Host
                         }
                         if (d.fAuthenticated != 0)
                         {
-                            // 예전에 등록된 리모컨: HID 서비스만 다시 켠다. 안 되면 지우고 새로 등록한다.
-                            if (EnableHid(radio, ref d)) return Done(d, "existing");
-                            ulong a = d.Address;
-                            Native.BluetoothRemoveDevice(ref a);
-                            Report("re-register", d.szName, ("address", Mac(d.Address)));
+                            // 영구 등록된 리모컨: 리모컨 버튼을 누르면 스스로 연결해 온다. HID 서비스만 켜 둔다.
+                            // 꺼져 있어 실패해도 등록은 지우지 않는다(지우면 다시 SYNC가 필요해진다).
+                            EnableHid(radio, ref d);
+                            Report("waiting-remembered", d.szName, ("address", Mac(d.Address)));
                             continue;
                         }
 
                         attempts.TryGetValue(d.Address, out int tried);
-                        string method = PinMethods[tried % PinMethods.Length];
+                        if (tried >= Methods.Length) tried = Methods.Length - 1;
+                        string method = Methods[tried];
                         attempts[d.Address] = tried + 1;
                         Report("found", d.szName, ("address", Mac(d.Address)), ("method", method), ("attempt", tried + 1));
                         if (method == "direct")
                         {
-                            // 인증 없이 HID 서비스만 켠다. 리모컨이 검색 가능 상태(LED 깜박임)일 때 연결된다.
-                            if (EnableHid(radio, ref d)) return Done(d, method);
-                            Report("retry", "다른 방식으로 다시 시도합니다. 리모컨 LED가 꺼졌으면 SYNC 버튼을 다시 누르세요.");
+                            // 임시 연결: 인증 없이 HID 서비스만 켠다. 리모컨이 검색 가능 상태(LED 깜박임)일 때 연결된다.
+                            if (EnableHid(radio, ref d)) return Done(d, method, false);
+                            Report("retry", "다시 시도합니다. 리모컨 LED가 꺼졌으면 SYNC 버튼을 다시 누르세요.");
                             continue;
                         }
-                        byte[] pin = Pin(method, hostAddress, d.Address);
-                        int r = AuthenticateWithTimeout(radio, d, pin, out string requested, out d);
-                        Report("authenticate", method, ("result", r), ("requested", requested));
-                        if (r != ERROR_SUCCESS)
-                        {
-                            Report("retry", "다른 방식으로 다시 시도합니다. 리모컨 LED가 꺼졌으면 SYNC 버튼을 다시 누르세요.");
-                            continue;
-                        }
-                        if (EnableHid(radio, ref d)) return Done(d, method);
+
+                        int r = AuthenticateWithTimeout(radio, d, Pin(method, hostAddress, d.Address), out d);
+                        Report("authenticate", method, ("result", r), ("attempt", tried + 1));
+                        if (r != ERROR_SUCCESS) continue;
+
+                        // 이 호출이 있어야 리모컨이 등록(PC 주소)을 기억한다.
+                        int count = 0;
+                        int s = Native.BluetoothEnumerateInstalledServices(radio, ref d, ref count, IntPtr.Zero);
+                        Report("services", d.szName, ("result", s), ("count", count));
+                        if (EnableHid(radio, ref d)) return Done(d, method, method == "sync");
                     }
                 }
                 Report("timeout", "리모컨을 찾지 못했습니다.");
@@ -98,9 +108,9 @@ namespace TestGunGame.Host
             }
         }
 
-        private string Done(Native.BLUETOOTH_DEVICE_INFO d, string method)
+        private string Done(Native.BLUETOOTH_DEVICE_INFO d, string method, bool permanent)
         {
-            Report("paired", d.szName, ("address", Mac(d.Address)), ("method", method));
+            Report("paired", d.szName, ("address", Mac(d.Address)), ("method", method), ("permanent", permanent));
             return "paired";
         }
 
@@ -113,82 +123,27 @@ namespace TestGunGame.Host
             return r == ERROR_SUCCESS || r == 87;
         }
 
-        private static byte[] Pin(string method, ulong host, ulong device)
+        /// <summary>PIN = 블루투스 주소 6바이트, 낮은 바이트부터(사람이 읽는 주소를 거꾸로 한 순서). 바이트 하나를 WCHAR 하나로 보낸다.</summary>
+        private static char[] Pin(string method, ulong host, ulong device)
         {
-            if (method == "0000") return new byte[] { 0x30, 0x30, 0x30, 0x30 };
-            // 주소의 낮은 바이트부터 6개 = 사람이 읽는 주소를 거꾸로 한 순서. 0x00·0x80 이상 값도 그대로 보낸다.
             byte[] b = BitConverter.GetBytes(method == "sync" ? host : device);
-            var pin = new byte[6];
-            Array.Copy(b, pin, 6);
+            var pin = new char[6];
+            for (int i = 0; i < 6; i++) pin[i] = (char)b[i];
             return pin;
         }
 
         /// <summary>등록 함수가 멈추는 장치·스택이 있어 제한 시간을 둔다. 시간이 지나면 1460(시간 초과)을 돌려준다.</summary>
-        private int AuthenticateWithTimeout(IntPtr radio, Native.BLUETOOTH_DEVICE_INFO device, byte[] pin, out string requested, out Native.BLUETOOTH_DEVICE_INFO updated)
+        private static int AuthenticateWithTimeout(IntPtr radio, Native.BLUETOOTH_DEVICE_INFO device, char[] pin, out Native.BLUETOOTH_DEVICE_INFO updated)
         {
             var dev = device;
-            string req = "";
-            var task = System.Threading.Tasks.Task.Run(() =>
-            {
-                int r = Authenticate(radio, ref dev, pin, out string q);
-                req = q;
-                return r;
-            });
+            var task = Task.Run(() => Native.BluetoothAuthenticateDevice(IntPtr.Zero, radio, ref dev, pin, pin.Length));
             if (!task.Wait(AuthTimeoutMs))
             {
-                requested = "timeout";
                 updated = device;
                 return 1460;
             }
-            requested = req;
             updated = dev;
             return task.Result;
-        }
-
-        /// <summary>
-        /// 인증 콜백을 등록하고 등록을 시작한다. 장치가 PIN(레거시)을 요구하면 원본 바이트 PIN으로,
-        /// 숫자 비교·알림 방식(일부 호환품)을 요구하면 수락으로 응답한다. Windows 확인 창은 뜨지 않는다.
-        /// </summary>
-        private int Authenticate(IntPtr radio, ref Native.BLUETOOTH_DEVICE_INFO device, byte[] pin, out string requested)
-        {
-            string req = "none";
-            int infoSize = Marshal.SizeOf(typeof(Native.BLUETOOTH_DEVICE_INFO));
-            Native.AuthenticationCallbackEx callback = (param, cbParams) =>
-            {
-                ulong remote = (ulong)Marshal.ReadInt64(cbParams, 8);
-                int method = Marshal.ReadInt32(cbParams, infoSize);
-                uint numeric = (uint)Marshal.ReadInt32(cbParams, infoSize + 12);
-                req = method.ToString();
-                Report("auth-callback", "인증 요청 받음", ("method", method));
-                IntPtr resp = Native.BuildAuthResponse(remote, method, pin, numeric);
-                try
-                {
-                    int sr = Native.BluetoothSendAuthenticationResponseEx(radio, resp);
-                    req += ":" + sr;
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(resp);
-                }
-                return true;
-            };
-            int reg = Native.BluetoothRegisterForAuthenticationEx(ref device, out IntPtr handle, callback, IntPtr.Zero);
-            if (reg != ERROR_SUCCESS)
-            {
-                requested = "register-failed:" + reg;
-                return reg;
-            }
-            try
-            {
-                int r = Native.BluetoothAuthenticateDeviceEx(IntPtr.Zero, radio, ref device, IntPtr.Zero, Native.MITMProtectionNotRequired);
-                requested = req;
-                return r;
-            }
-            finally
-            {
-                Native.BluetoothUnregisterAuthentication(handle);
-                GC.KeepAlive(callback);
-            }
         }
 
         private static IntPtr FindRadio(out ulong address, out string name)

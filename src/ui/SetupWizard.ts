@@ -37,11 +37,12 @@ const PAIR_SECONDS = 120;
 
 const PAIR_STAGE_TEXT: Record<string, (p: PairProgress) => string> = {
   radio: () => '블루투스 준비됨 — 리모컨을 찾는 중…',
-  searching: () => '리모컨을 찾는 중… 빨간 SYNC 버튼을 누르세요.',
-  found: (p) => `리모컨 발견 — 등록 중 (${p.attempt}번째 방식)`,
+  searching: () => '리모컨을 찾는 중…',
+  found: (p) => `리모컨 발견 — 등록 중 (${p.attempt}번째 시도)`,
+  'waiting-remembered': () => '등록된 리모컨이 있습니다 — 리모컨의 아무 버튼이나 누르세요.',
   retry: (p) => p.message,
   're-register': () => '이전 등록 정보를 정리하고 다시 등록합니다…',
-  paired: () => '등록 완료 — 연결하는 중…',
+  paired: (p) => (p.permanent ? '등록 완료 — 다음부터는 아무 버튼만 누르면 연결됩니다. 연결하는 중…' : '임시 연결 — 연결하는 중…'),
   already: () => '등록된 리모컨 — 연결하는 중…',
   'no-radio': (p) => p.message,
 };
@@ -284,8 +285,14 @@ export class SetupWizard {
         if (this.deps.manager.canPair) {
           body = [
             ...head('Wii 리모컨 연결'),
-            h('p', { class: 'setup-big' }, '리모컨 배터리 덮개를 열고 빨간 ', h('b', {}, 'SYNC'), ' 버튼을 누르세요.'),
-            h('p', { class: 'sub' }, '리모컨 LED가 깜박이는 동안 게임이 자동으로 등록하고 연결합니다. 전에 연결한 리모컨은 아무 버튼이나 누르면 됩니다.'),
+            h('p', { class: 'setup-big' }, '리모컨의 아무 버튼이나 누르세요.'),
+            h(
+              'p',
+              { class: 'sub' },
+              '처음 연결하는 리모컨이면 배터리 덮개를 열고 빨간 ',
+              h('b', {}, 'SYNC'),
+              ' 버튼을 누르세요. LED가 깜박이는 동안 게임이 자동으로 등록하며, 한 번 등록하면 다음부터는 아무 버튼만 누르면 연결됩니다.',
+            ),
             this.status,
             h(
               'div',

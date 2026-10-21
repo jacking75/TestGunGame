@@ -34,7 +34,6 @@ namespace TestGunGame.Host
         private readonly Dictionary<int, HidConnection> connections = new Dictionary<int, HidConnection>();
         private int nextHandle = 1;
         private WiimotePairing pairing;
-        private FormWindowState windowedState = FormWindowState.Maximized;
 
         public MainForm(string devUrl)
         {
@@ -77,7 +76,7 @@ namespace TestGunGame.Host
             core.Settings.IsStatusBarEnabled = false;
             core.Settings.IsZoomControlEnabled = false;
             core.WebMessageReceived += OnMessage;
-            core.ContainsFullScreenElementChanged += (s, e) => SetFullscreen(core.ContainsFullScreenElement);
+            // 게임 안의 전체 화면 요청은 WebView 영역만 채운다. 창을 테두리 없이 키워 작업 표시줄을 가리지 않는다.
 
             if (devUrl != null)
             {
@@ -88,22 +87,6 @@ namespace TestGunGame.Host
                 string gameDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "game");
                 core.SetVirtualHostNameToFolderMapping(VirtualHost, gameDir, CoreWebView2HostResourceAccessKind.Allow);
                 core.Navigate("https://" + VirtualHost + "/index.html");
-            }
-        }
-
-        private void SetFullscreen(bool on)
-        {
-            if (on)
-            {
-                windowedState = WindowState == FormWindowState.Minimized ? FormWindowState.Maximized : WindowState;
-                FormBorderStyle = FormBorderStyle.None;
-                WindowState = FormWindowState.Normal; // 테두리 없는 최대화가 작업 표시줄까지 덮도록 다시 설정
-                WindowState = FormWindowState.Maximized;
-            }
-            else
-            {
-                FormBorderStyle = FormBorderStyle.Sizable;
-                WindowState = windowedState;
             }
         }
 
