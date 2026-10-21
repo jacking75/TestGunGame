@@ -1,5 +1,6 @@
 import type { Point } from '../../src/calibration/homography';
 import type { PairProgress } from '../../src/input/wiimote/hid';
+import { NO_BUTTONS, type WiimoteButtons } from '../../src/input/wiimote/protocol';
 import { WiimoteManager } from '../../src/input/wiimote/WiimoteManager';
 import { WiimoteSource } from '../../src/input/WiimoteSource';
 
@@ -18,12 +19,34 @@ export interface Pad {
   readonly dotCount: number;
   readonly fireHeld: boolean;
   readonly coverHeld: boolean;
-  readonly homeHeld: boolean;
-  readonly anyHeld: boolean;
+  /** 리모컨 버튼 전체(+ − HOME·십자 확인용). 연결이 없으면 모두 false */
+  readonly buttons: WiimoteButtons;
+  /** 리모컨 비틀림 각도(라디안, 센서바 두 점 기준) */
+  readonly roll: number;
   readonly reportsPerSec: number;
   /** 지난 호출 이후 방아쇠를 새로 당긴 순간들의 원본 조준 좌표 */
   takeFires(): (Point | null)[];
+  /** 진동을 잠깐 켠다 */
+  rumble(ms: number): void;
   update(dt: number): void;
+}
+
+/** 녹화 한 줄: 리모컨 보고 그대로(시각 ms, 버튼 비트, IR 점 [x, y, 크기]) */
+export interface RecordedReport {
+  t: number;
+  b: number;
+  d: [number, number, number][];
+}
+
+const BUTTON_ORDER = Object.keys(NO_BUTTONS) as (keyof WiimoteButtons)[];
+
+/** 버튼 상태 ↔ 비트(녹화 파일용). 순서는 protocol.ts의 NO_BUTTONS 키 순서다. */
+export function encodeButtons(b: WiimoteButtons): number {
+  return BUTTON_ORDER.reduce((m, k, i) => (b[k] ? m | (1 << i) : m), 0);
+}
+
+export function decodeButtons(mask: number): WiimoteButtons {
+  return Object.fromEntries(BUTTON_ORDER.map((k, i) => [k, (mask & (1 << i)) !== 0])) as unknown as WiimoteButtons;
 }
 
 /** 등록된 리모컨이 스스로 연결될 여유를 준 뒤 앱 안 등록을 시작한다 */
@@ -53,7 +76,20 @@ export class WiiPad implements Pad {
   private lastReports = 0;
   private rateTime = 0;
 
-  constructor(private readonly log: (kind: string, data: Record<string, unknown>) => void) {
+  constructor(
+    private readonly log: (kind: string, data: Record<string, unknown>) => void,
+    /** 리모컨 보고를 하나도 빠짐없이 받는다(녹화용) */
+    record: (r: RecordedReport) => void,
+  ) {
+    let unsubscribe: (() => void) | null = null;
+    this.manager.onDevice((d) => {
+      unsubscribe?.();
+      unsubscribe = d
+        ? d.onReport((r) =>
+            record({ t: Math.round(r.time * 10) / 10, b: encodeButtons(r.buttons), d: r.dots.map((p) => [p.x, p.y, p.size]) }),
+          )
+        : null;
+    });
     void this.manager.init();
     this.manager.onChange(() => {
       this.log('availability', { availability: this.manager.availability, error: this.manager.lastError });
@@ -99,12 +135,16 @@ export class WiiPad implements Pad {
     return this.source.isHeld('cover');
   }
 
-  get homeHeld(): boolean {
-    return this.connected && this.source.rawButtons.home;
+  get buttons(): WiimoteButtons {
+    return this.connected ? this.source.rawButtons : NO_BUTTONS;
   }
 
-  get anyHeld(): boolean {
-    return this.connected && Object.values(this.source.rawButtons).some(Boolean);
+  get roll(): number {
+    return this.source.ir.roll;
+  }
+
+  rumble(ms: number): void {
+    this.manager.device?.pulseRumble(ms);
   }
 
   takeFires(): (Point | null)[] {
@@ -155,9 +195,22 @@ export class WiiPad implements Pad {
   }
 }
 
+const SIM_KEYS: Record<string, keyof WiimoteButtons> = {
+  ArrowUp: 'up',
+  ArrowDown: 'down',
+  ArrowLeft: 'left',
+  ArrowRight: 'right',
+  Equal: 'plus',
+  Minus: 'minus',
+  KeyH: 'home',
+  Digit1: 'one',
+  Digit2: 'two',
+};
+
 /**
  * 리모컨 없이 흐름을 확인하는 가짜 총(자동 검증용, ?sim=1).
- * 마우스 위치 = 조준, 왼쪽 버튼 = 방아쇠, 오른쪽 버튼 = 엄폐(A), H = HOME, K = 센서바 가림 전환.
+ * 마우스 위치 = 조준, 왼쪽 버튼 = 방아쇠(B), 오른쪽 버튼 = 엄폐(A), 화살표 = 십자, = / - / H = + / − / HOME,
+ * K = 센서바 가림 전환, Q / E = 왼쪽·오른쪽으로 30도 비틀기 전환, P = 전원 끄기·켜기 전환.
  */
 export class SimPad implements Pad {
   readonly status = '모의 입력';
@@ -167,7 +220,9 @@ export class SimPad implements Pad {
   private covered = false;
   private fire = false;
   private cover = false;
-  private home = false;
+  private keys: Partial<WiimoteButtons> = {};
+  private off = false;
+  roll = 0;
   private fires: (Point | null)[] = [];
   private time = 0;
 
@@ -187,16 +242,22 @@ export class SimPad implements Pad {
       else if (e.button === 2) this.cover = false;
     });
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyH') this.home = true;
-      if (e.code === 'KeyK' && !e.repeat) this.covered = !this.covered;
+      const k = SIM_KEYS[e.code];
+      if (k) this.keys[k] = true;
+      if (e.repeat) return;
+      if (e.code === 'KeyK') this.covered = !this.covered;
+      if (e.code === 'KeyP') this.off = !this.off;
+      if (e.code === 'KeyQ') this.roll = this.roll < 0 ? 0 : -Math.PI / 6;
+      if (e.code === 'KeyE') this.roll = this.roll > 0 ? 0 : Math.PI / 6;
     });
     window.addEventListener('keyup', (e) => {
-      if (e.code === 'KeyH') this.home = false;
+      const k = SIM_KEYS[e.code];
+      if (k) this.keys[k] = false;
     });
   }
 
   get connected(): boolean {
-    return this.time > 0.3;
+    return this.time > 0.3 && !this.off;
   }
   get raw(): Point | null {
     return this.connected && !this.covered ? this.mouse : null;
@@ -213,12 +274,10 @@ export class SimPad implements Pad {
   get coverHeld(): boolean {
     return this.cover;
   }
-  get homeHeld(): boolean {
-    return this.home;
+  get buttons(): WiimoteButtons {
+    return this.connected ? { ...NO_BUTTONS, ...this.keys, b: this.fire, a: this.cover } : NO_BUTTONS;
   }
-  get anyHeld(): boolean {
-    return this.fire || this.cover || this.home;
-  }
+  rumble(): void {}
   takeFires(): (Point | null)[] {
     const f = this.fires;
     this.fires = [];

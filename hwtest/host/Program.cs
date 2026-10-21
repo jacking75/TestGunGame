@@ -34,7 +34,8 @@ namespace WiiHwTest
 
     /// <summary>
     /// 검증 앱 창. 게임과 같은 방식(WebView2 + HID·블루투스 메시지)이지만 데이터·기록 폴더는 따로 쓴다.
-    /// 기록: %LOCALAPPDATA%\WiiHwTest\logs\hw-test.log, 결과: %LOCALAPPDATA%\WiiHwTest\results\*.json
+    /// 기록: %LOCALAPPDATA%\WiiHwTest\logs\hw-test.log, 결과: %LOCALAPPDATA%\WiiHwTest\results\*.json,
+    /// 입력 녹화: %LOCALAPPDATA%\WiiHwTest\recordings\*.jsonl
     /// </summary>
     internal sealed class MainForm : Form
     {
@@ -52,11 +53,14 @@ namespace WiiHwTest
         private int nextHandle = 1;
         private WiimotePairing pairing;
         private int closedGame;
+        /// <summary>이번 실행의 리모컨 입력 녹화 파일(게임 자동 검증에서 재생한다)</summary>
+        private readonly string recordPath;
 
         public MainForm(string devUrl, bool sim)
         {
             this.devUrl = devUrl;
             this.sim = sim;
+            recordPath = Path.Combine(baseDir, "recordings", DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".jsonl");
             Text = "Wii 총 검증";
             BackColor = Color.FromArgb(16, 19, 24);
             ClientSize = new Size(1280, 720);
@@ -178,6 +182,7 @@ namespace WiiHwTest
                         ["canPair"] = true,
                         ["closedGame"] = closedGame,
                         ["logPath"] = LogPath,
+                        ["recordPath"] = recordPath,
                     };
 
                 case "hid.list":
@@ -259,6 +264,17 @@ namespace WiiHwTest
                 case "log.append":
                     AppendLog(msg.TryGetValue("line", out object line) ? line as string : null);
                     return true;
+
+                case "rec.append":
+                {
+                    string text = msg.TryGetValue("text", out object t) ? t as string : null;
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(recordPath));
+                        File.AppendAllText(recordPath, text, Utf8);
+                    }
+                    return true;
+                }
 
                 case "result.save":
                 {

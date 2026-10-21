@@ -33,6 +33,8 @@ export class AccuracyTest {
   constructor(
     readonly screen: { width: number; height: number },
     readonly crosshair: boolean,
+    /** 표적 하나에 쏠 발수 */
+    readonly shotsPerTarget = SHOTS_PER_TARGET,
   ) {}
 
   get done(): boolean {
@@ -54,7 +56,7 @@ export class AccuracyTest {
     const error = aim ? Math.hypot((aim.x - t.x) * width, (aim.y - t.y) * height) / Math.min(width, height) : null;
     const shot = { target: this.index, aim: aim && { ...aim }, error };
     this.shots.push(shot);
-    if (this.shotsAtTarget >= SHOTS_PER_TARGET) this.index++;
+    if (this.shotsAtTarget >= this.shotsPerTarget) this.index++;
     return shot;
   }
 

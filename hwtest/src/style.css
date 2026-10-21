@@ -119,19 +119,21 @@ header {
   text-shadow: 0 1px 4px #000;
 }
 
-/* 표적 */
+/* 표적: big(보정) · small(정확도) · play(실전·이동) */
 .target {
-  display: none;
   position: absolute;
+  border-radius: 50%;
+  z-index: 2;
+}
+
+.target.big {
   width: 70px;
   height: 70px;
   margin: -35px 0 0 -35px;
-  border-radius: 50%;
   background:
     radial-gradient(circle, var(--yellow) 0 5px, transparent 6px),
     radial-gradient(circle, transparent 0 16px, var(--yellow) 17px 20px, transparent 21px),
     radial-gradient(circle, transparent 0 31px, var(--yellow) 32px 35px, transparent 36px);
-  z-index: 2;
 }
 
 .target.small {
@@ -141,6 +143,15 @@ header {
   background:
     radial-gradient(circle, var(--yellow) 0 4px, transparent 5px),
     radial-gradient(circle, transparent 0 19px, var(--yellow) 20px 23px, transparent 24px);
+}
+
+/* 맞히면 되는 크기(게임 판정 반지름: 화면 짧은 변의 4.5%) */
+.target.play {
+  width: 9vmin;
+  height: 9vmin;
+  margin: -4.5vmin 0 0 -4.5vmin;
+  background: radial-gradient(circle, #fff 0 12%, var(--bad) 13% 38%, #fff 39% 62%, var(--bad) 63% 100%);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.6);
 }
 
 /* 조준점 */
@@ -288,4 +299,95 @@ header {
   border-top: 1px solid var(--line);
   z-index: 5;
   overflow-wrap: anywhere;
+}
+
+/* 예·아니요 질문 */
+.answer {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  gap: 24px;
+  z-index: 4;
+}
+
+.answer.show {
+  display: flex;
+}
+
+.answer span {
+  padding: 22px 34px;
+  border-radius: 12px;
+  font-size: clamp(22px, 2.6vw, 34px);
+  font-weight: 700;
+  background: var(--panel);
+  border: 2px solid var(--line);
+}
+
+.answer .yes {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.answer .no {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+/* 버튼 확인 목록 */
+.checklist {
+  position: absolute;
+  left: 50%;
+  top: 55%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  width: min(900px, calc(100% - 32px));
+}
+
+.checklist span {
+  padding: 14px 20px;
+  border-radius: 10px;
+  font-size: clamp(18px, 2vw, 26px);
+  font-weight: 700;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  color: var(--muted);
+}
+
+.checklist span.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+/* 이동하며 사격: 누르고 있는 십자 방향 */
+.arrows {
+  position: absolute;
+  left: 50%;
+  bottom: 52px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+
+.arrows span {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 28px;
+  font-weight: 700;
+  background: var(--panel);
+  border: 2px solid var(--line);
+  color: var(--muted);
+}
+
+.arrows span.on {
+  color: #000;
+  background: var(--cyan);
+  border-color: var(--cyan);
 }
