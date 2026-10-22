@@ -138,7 +138,7 @@ async function main() {
     await move(0.5, 0.5);
 
     await waitStep('feedback');
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < 2; k++) {
       await sleep(700);
       await click();
     }

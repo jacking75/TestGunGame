@@ -60,7 +60,7 @@ type StepId =
 
 const STEPS: { id: StepId; name: string }[] = [
   { id: 'connect', name: '연결' },
-  { id: 'feedback', name: 'LED·진동·소리' },
+  { id: 'feedback', name: '진동·소리' },
   { id: 'sensor', name: '센서바' },
   { id: 'calibrate', name: '보정' },
   { id: 'aim', name: '조준(조준점)' },
@@ -408,22 +408,22 @@ class Runner {
     say('리모컨의 아무 버튼이나 누르세요', '처음 쓰는 리모컨이면 배터리 칸 안의 빨간 SYNC 버튼을 누르세요. 이 검증은 약 12분 걸립니다.', pad.status);
   }
 
-  // ───── 2. LED·진동·소리(사람이 판정) ─────
+  // ───── 2. 진동·소리(사람이 판정) ─────
+  // LED는 건 안에 가려 사람이 확인하기 어려워 묻지 않는다(2026-10-22 사용자 요청).
 
   private updateFeedback(fires: (Point | null)[], b: WiimoteButtons): void {
     showCross(null, false);
     const answers = (this.s.answers as Record<string, Answer> | undefined) ?? {};
     this.s.answers = answers;
     const questions: { key: string; title: string; sub: string; repeat?: () => void }[] = [
-      { key: 'led', title: '리모컨 아래쪽 LED 4개 중 맨 왼쪽 1개만 켜져 있나요?', sub: '파란 불빛 4개 중 하나만 켜져 있으면 “예”입니다.' },
       { key: 'rumble', title: '리모컨이 진동하나요?', sub: '2초마다 짧게 진동시킵니다.', repeat: () => this.pad.rumble(400) },
       { key: 'sound', title: 'PC 스피커에서 “삑” 소리가 들리나요?', sub: '2초마다 소리를 냅니다. 스피커 음량을 확인하세요.', repeat: () => beep(660, 250) },
     ];
     const q = questions.find((x) => !answers[x.key]);
     if (!q) {
       const ok = questions.every((x) => answers[x.key] === 'yes');
-      const no = questions.filter((x) => answers[x.key] === 'no').map((x) => ({ led: 'LED', rumble: '진동', sound: '소리' })[x.key as 'led']);
-      this.pass({ pass: ok, text: ok ? 'LED·진동·소리 모두 확인' : `안 됨: ${no.join(', ')}`, data: { ...answers } });
+      const no = questions.filter((x) => answers[x.key] === 'no').map((x) => ({ rumble: '진동', sound: '소리' })[x.key as 'rumble']);
+      this.pass({ pass: ok, text: ok ? '진동·소리 모두 확인' : `안 됨: ${no.join(', ')}`, data: { ...answers } });
       return;
     }
     // 질문이 바뀐 직후의 입력은 이전 질문의 답이 이어진 것이므로 잠시 받지 않는다.
