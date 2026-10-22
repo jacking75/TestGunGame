@@ -2,14 +2,16 @@ import { Sfx } from '../audio/Sfx';
 import { CalibrationSession, provisionalAim } from '../calibration/CalibrationSession';
 import { CalibrationStore, CALIBRATION_VERSION, currentScreen, sameScreen } from '../calibration/CalibrationStore';
 import { applyHomography, type Point } from '../calibration/homography';
-import { GameSession, type GameEvent } from '../game/GameSession';
+import { GameSession, type GameEvent, type GameMode } from '../game/GameSession';
 import { InputHub } from '../input/InputHub';
 import { MouseKeyboardSource } from '../input/MouseKeyboardSource';
 import type { InputFrame, InputSource, InputSourceId } from '../input/types';
 import { WiimoteManager } from '../input/wiimote/WiimoteManager';
 import { WiimoteSource } from '../input/WiimoteSource';
 import { World } from '../rendering/World';
+import { FREE_RANGE } from '../stage/freeRange';
 import { STAGE1 } from '../stage/stage1';
+import type { StageDef } from '../stage/types';
 import { AccuracyCheck } from '../ui/AccuracyCheck';
 import { CalibrationView } from '../ui/CalibrationView';
 import { Crosshair } from '../ui/Crosshair';
@@ -69,6 +71,8 @@ export class App {
   private setup: { wizard: SetupWizard; then: 'play' | 'title' } | null = null;
   private accuracy: { check: AccuracyCheck; source: InputSourceId } | null = null;
   private device: PlayDevice | null = loadDevice();
+  private mode: GameMode = 'rail';
+  private loadedStage: StageDef = STAGE1;
   private pauseReason = '';
   private endingTime = 0;
   private lastFrame = 0;
@@ -312,6 +316,10 @@ export class App {
         break;
       case 'waveStart': {
         const p = s.stage.points[e.point];
+        if (s.mode === 'free') {
+          if (s.stats.shots > 0) this.hud.toast('표적을 다시 세웠습니다', 1.2);
+          break;
+        }
         this.hud.toast(p.waves.length > 1 ? `${p.name} — 웨이브 ${e.wave + 1}/${p.waves.length}` : p.name, 1.3);
         break;
       }
@@ -340,6 +348,7 @@ export class App {
 
   private showTitle(): void {
     this.state = 'title';
+    this.useStage(STAGE1);
     this.titleRefresh = 0;
     this.mouse.captureGameKeys = false;
     this.hud.show(false);
@@ -347,7 +356,8 @@ export class App {
     this.root.classList.remove('playing');
     this.setScreen(
       Screens.title(this.statusInfo(), {
-        start: () => void this.startFlow(),
+        start: () => void this.startFlow('rail'),
+        free: () => void this.startFlow('free'),
         setup: () => this.openSetup('choose', true, 'title'),
         calibrate: () => void this.beginCalibration('title'),
         accuracy: () => void this.openAccuracy(),
@@ -447,7 +457,8 @@ export class App {
   // ───────── 시작·일시정지·재시작 ─────────
 
   /** 게임 시작: 실제 게임처럼 컨트롤러 확인을 거친다. 마우스를 고른 경우 바로 시작한다. */
-  private async startFlow(): Promise<void> {
+  private async startFlow(mode: GameMode): Promise<void> {
+    this.mode = mode;
     await this.prepareScreen();
     if (!this.device) this.openSetup('choose', true, 'play');
     else if (this.device === 'mouse') this.finishSetup('mouse');
@@ -464,8 +475,10 @@ export class App {
   }
 
   private startGame(): void {
+    const stage = this.mode === 'free' ? FREE_RANGE : STAGE1;
+    this.useStage(stage);
     this.world.clearDynamic();
-    this.session = new GameSession(STAGE1, (Math.random() * 2 ** 31) | 0);
+    this.session = new GameSession(stage, (Math.random() * 2 ** 31) | 0, this.mode);
     this.hub.reset();
     this.state = 'playing';
     this.mouse.captureGameKeys = true;
@@ -474,9 +487,17 @@ export class App {
     this.setScreen(null);
     // 다시 도전 시 첫 프레임에 이전 판의 체력·시간이 보이지 않게 바로 갱신한다.
     this.hud.update(0, this.session, false);
-    this.hwlog('game-start', { device: this.device, preference: this.hub.preference, wiimote: this.wiimote.connected });
+    this.hwlog('game-start', { mode: this.mode, device: this.device, preference: this.hub.preference, wiimote: this.wiimote.connected });
     this.hud.show(true);
-    this.hud.toast(STAGE1.points[0].name, 1.3);
+    this.hud.toast(this.mode === 'free' ? '자유 이동 시험장 — 십자 버튼으로 이동' : stage.points[0].name, 1.6);
+  }
+
+  /** 모드를 바꿀 때만 장면을 다시 만든다. */
+  private useStage(stage: StageDef): void {
+    if (this.loadedStage === stage) return;
+    this.world.clearDynamic();
+    this.world.loadStage(stage);
+    this.loadedStage = stage;
   }
 
   private async restart(): Promise<void> {
@@ -493,12 +514,25 @@ export class App {
     this.mouse.captureGameKeys = false;
     this.root.classList.remove('playing');
     this.crosshair.update(null, false);
+    const free = this.session?.mode === 'free';
     this.setScreen(
       Screens.paused(reason, {
         resume: () => this.resume(),
         restart: () => void this.restart(),
         calibrate: () => void this.beginCalibration('paused'),
         menu: () => this.showTitle(),
+        resetTargets: free
+          ? () => {
+              this.session?.resetTargets();
+              this.resume();
+            }
+          : undefined,
+        toStart: free
+          ? () => {
+              this.session?.returnToStart();
+              this.resume();
+            }
+          : undefined,
       }),
     );
   }

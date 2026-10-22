@@ -80,7 +80,12 @@ async function click(c, x, y) {
   await sleep(30);
   await mouseUp(c);
 }
-const KEYS = { Space: { key: ' ', code: 'Space', keyCode: 32 }, Escape: { key: 'Escape', code: 'Escape', keyCode: 27 } };
+const KEYS = {
+  Space: { key: ' ', code: 'Space', keyCode: 32 },
+  Escape: { key: 'Escape', code: 'Escape', keyCode: 27 },
+  KeyW: { key: 'w', code: 'KeyW', keyCode: 87 },
+  KeyD: { key: 'd', code: 'KeyD', keyCode: 68 },
+};
 async function key(c, name, type) {
   const k = KEYS[name];
   await c.send('Input.dispatchKeyEvent', { type, key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode });
@@ -126,6 +131,8 @@ window.__v = {
       ammo: q('#hud .ammo span')?.textContent ?? '',
       hp: document.querySelectorAll('#hud .hp i:not(.lost)').length,
       time: q('#hud .time')?.textContent ?? '',
+      enemies: q('#hud .enemies')?.textContent ?? '',
+      score: q('#hud .score')?.textContent ?? '',
       stance: q('#hud .stance')?.textContent ?? '',
       cover: q('#hud .stance')?.classList.contains('cover') ?? false,
       toast: q('#hud .toast.show')?.textContent ?? '',
@@ -450,6 +457,66 @@ async function main() {
       kinds('game-end').length === RUNS + 1 && kinds('pause').length >= 3 && kinds('accuracy-result')[0]?.pass === true && kinds('trigger-result')[0]?.pass === true,
       `${lines.length}줄 · game-end ${kinds('game-end').length} · pause ${kinds('pause').length} · accuracy ${kinds('accuracy-result').length} · trigger ${kinds('trigger-result').length}`,
     );
+
+    // 12) 자유 이동 시험장(T13): 키보드 이동·이동하며 사격·표적 재생성·시작 위치 복귀·레일 모드 분리
+    await clickButton(c, '자유 이동 시험장');
+    await waitFor(c, `__v.hud().hudVisible && __v.hud().enemies.includes('표적 5/5')`, 5000, '시험장 시작');
+    await shot(c, '40-free-start');
+    const pos = async () => {
+      const m = /위치 (-?[\d.]+), (-?[\d.]+)/.exec((await hud()).time);
+      return m ? { x: Number(m[1]), z: Number(m[2]) } : null;
+    };
+    await key(c, 'KeyW', 'keyDown');
+    await sleep(1000);
+    await key(c, 'KeyW', 'keyUp');
+    await sleep(200);
+    const fwd = await pos();
+    check('자유 이동: W 1초 = 약 2m 전진, 놓으면 멈춤', fwd && fwd.z > 1.5 && fwd.z <= 3 && Math.abs(fwd.x) < 0.05, JSON.stringify(fwd));
+    // 오른쪽으로 옆걸음하면서 표적을 쏜다.
+    await key(c, 'KeyD', 'keyDown');
+    let freeShots = 0;
+    const freeStart = Date.now();
+    while (Date.now() - freeStart < 20000 && !(await hud()).enemies.includes('표적 0/5')) {
+      const h = await hud();
+      if (h.ammo === '0/6') {
+        await key(c, 'Space', 'keyDown');
+        await sleep(950);
+        await key(c, 'Space', 'keyUp');
+        continue;
+      }
+      const sc = await c.eval('__v.scan()');
+      if (sc.targets.length) {
+        await click(c, sc.targets[0].x * h.vw, sc.targets[0].y * h.vh);
+        freeShots++;
+        await sleep(120);
+      } else await sleep(60);
+    }
+    await key(c, 'KeyD', 'keyUp');
+    const afterShoot = await hud();
+    const side = await pos();
+    check('자유 이동: D 누른 채 사격으로 표적 5개 모두 쓰러뜨림', afterShoot.enemies.includes('표적 0/5') && side && side.x > 0.5, `${afterShoot.enemies} · ${afterShoot.score} · 발사 ${freeShots} · 위치 ${JSON.stringify(side)}`);
+    await waitFor(c, `__v.hud().enemies.includes('표적 5/5')`, 4000, '표적 다시 세움');
+    check('자유 이동: 모두 쓰러뜨리면 표적이 다시 선다', true, '');
+    await key(c, 'Escape', 'keyDown');
+    await key(c, 'Escape', 'keyUp');
+    await waitFor(c, `__v.hud().screen === '일시정지'`, 2000, '시험장 일시정지');
+    await shot(c, '41-free-pause');
+    await clickButton(c, '시작 위치로');
+    await sleep(300);
+    const home = await pos();
+    check('자유 이동: 일시정지 메뉴의 시작 위치로', home && home.x === 0 && home.z === 0, JSON.stringify(home));
+    await key(c, 'Escape', 'keyDown');
+    await key(c, 'Escape', 'keyUp');
+    await waitFor(c, `__v.hud().screen === '일시정지'`, 2000, '시험장 일시정지 2');
+    await clickButton(c, '메뉴로');
+    await waitFor(c, `__v.hud().screen === 'TestGunGame'`, 2000, '시험장 후 메뉴');
+    await clickButton(c, '게임 시작');
+    await waitFor(c, `__v.hud().hudVisible && __v.hud().screen === ''`, 5000, '레일 다시 시작');
+    await key(c, 'KeyW', 'keyDown');
+    await sleep(500);
+    await key(c, 'KeyW', 'keyUp');
+    const rail = await hud();
+    check('모드 분리: 시험장 뒤 레일 모드는 시간·남은 적 표시, W로 움직이지 않음', rail.time.includes('남은 시간') && rail.enemies.includes('남은 적 15/15') && !rail.time.includes('위치'), `${rail.time} · ${rail.enemies}`);
   } catch (e) {
     result.notes.push(`중단: ${e.message}`);
     log('중단', e.message);

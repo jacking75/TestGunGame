@@ -12,7 +12,7 @@ type Handler = () => void;
 
 /** 메뉴 화면 모음. 각 함수는 화면 요소를 만들어 돌려준다. */
 export const Screens = {
-  title(status: StatusInfo, on: { start: Handler; calibrate: Handler; accuracy: Handler; setup: Handler; help: Handler; diag: Handler }) {
+  title(status: StatusInfo, on: { start: Handler; free: Handler; calibrate: Handler; accuracy: Handler; setup: Handler; help: Handler; diag: Handler }) {
     return screen(
       h('h1', {}, 'TestGunGame'),
       h('p', { class: 'sub' }, 'Wii 총 레일 슈팅 — 1스테이지 훈련 시설'),
@@ -21,6 +21,7 @@ export const Screens = {
         'div',
         { class: 'buttons' },
         h('button', { class: 'primary', onclick: on.start, 'data-default': true }, '게임 시작'),
+        h('button', { onclick: on.free }, '자유 이동 시험장'),
         h('button', { onclick: on.setup }, '컨트롤러 설정'),
         h('button', { onclick: on.calibrate }, '조준 보정'),
         h('button', { onclick: on.accuracy }, '정확도 측정'),
@@ -41,6 +42,7 @@ export const Screens = {
         row('발사', '방아쇠(B)', '왼쪽 버튼'),
         row('엄폐·재장전', 'A 버튼을 누르고 유지', 'Space 또는 오른쪽 버튼 유지'),
         row('일시정지', '+ / − / HOME', 'Esc 또는 P'),
+        row('이동(자유 이동 시험장)', '십자 버튼', 'W A S D 또는 방향키'),
         row('메뉴 선택', '버튼을 겨냥하고 방아쇠', '클릭'),
       ),
       h(
@@ -50,12 +52,13 @@ export const Screens = {
         h('li', {}, '엄폐를 0.8초 유지하면 6발로 장전됩니다. 엄폐 중에는 피해를 받지 않고 쏠 수도 없습니다.'),
         h('li', {}, '적 머리 위에 노란 삼각형(!)이 뜨면 곧 공격합니다. 숨으세요.'),
         h('li', {}, '몸통 2발, 머리 1발로 처치합니다. 머리 명중은 200점, 몸통은 100점입니다.'),
+        h('li', {}, '자유 이동 시험장: 십자 위·아래로 앞뒤, 좌우로 옆걸음합니다. 표적은 공격하지 않고, 모두 쓰러뜨리면 다시 섭니다. 시간 제한이 없습니다.'),
       ),
       h('div', { class: 'buttons' }, h('button', { onclick: on.back }, '돌아가기')),
     );
   },
 
-  paused(reason: string, on: { resume: Handler; restart: Handler; calibrate: Handler; menu: Handler }) {
+  paused(reason: string, on: { resume: Handler; restart: Handler; calibrate: Handler; menu: Handler; resetTargets?: Handler; toStart?: Handler }) {
     return screen(
       h('h2', {}, '일시정지'),
       reason ? h('p', { class: 'warn' }, reason) : null,
@@ -64,7 +67,9 @@ export const Screens = {
         'div',
         { class: 'buttons' },
         h('button', { class: 'primary', onclick: on.resume, 'data-default': true }, '재개'),
-        h('button', { onclick: on.restart }, '처음부터 다시'),
+        on.resetTargets ? h('button', { onclick: on.resetTargets }, '표적 초기화') : null,
+        on.toStart ? h('button', { onclick: on.toStart }, '시작 위치로') : null,
+        on.resetTargets ? null : h('button', { onclick: on.restart }, '처음부터 다시'),
         h('button', { onclick: on.calibrate }, '조준 보정'),
         h('button', { onclick: on.menu }, '메뉴로'),
       ),

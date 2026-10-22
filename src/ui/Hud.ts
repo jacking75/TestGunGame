@@ -58,13 +58,23 @@ export class Hud {
     this.hp.forEach((p, i) => p.classList.toggle('lost', i >= s.hp));
     this.ammo.forEach((b, i) => b.classList.toggle('spent', i >= s.weapon.ammo));
     this.ammoText.textContent = `${s.weapon.ammo}/${s.weapon.capacity}`;
-    this.time.innerHTML = `${formatTime(s.timeLeft)}<small>남은 시간</small>`;
-    this.time.classList.toggle('low', s.timeLeft <= 30);
-    this.score.innerHTML = `${s.stats.score.toLocaleString('ko-KR')}<small>점수</small>`;
-
-    const remaining = s.totalEnemies - s.stats.kills;
     const point = s.stage.points[s.pointIndex];
-    this.enemies.innerHTML = `${point.name}<br>남은 적 ${remaining}/${s.totalEnemies}`;
+    if (s.mode === 'free') {
+      // 시험장: 시간 대신 이동 키·위치, 점수 대신 명중/발사, 남은 적 대신 서 있는 표적
+      const m = s.lastMove;
+      const keys = [m.y > 0 ? '↑' : '', m.y < 0 ? '↓' : '', m.x < 0 ? '←' : '', m.x > 0 ? '→' : ''].join('') || '정지';
+      this.time.innerHTML = `${keys}<small>위치 ${s.offset.x.toFixed(1)}, ${(-s.offset.z).toFixed(1)}</small>`;
+      this.time.classList.remove('low');
+      this.score.innerHTML = `${s.stats.hits}/${s.stats.shots}<small>명중/발사</small>`;
+      const standing = [...s.enemies.values()].filter((e) => e.alive).length;
+      this.enemies.innerHTML = `${point.name}<br>표적 ${standing}/${s.totalEnemies}`;
+    } else {
+      this.time.innerHTML = `${formatTime(s.timeLeft)}<small>남은 시간</small>`;
+      this.time.classList.toggle('low', s.timeLeft <= 30);
+      this.score.innerHTML = `${s.stats.score.toLocaleString('ko-KR')}<small>점수</small>`;
+      const remaining = s.totalEnemies - s.stats.kills;
+      this.enemies.innerHTML = `${point.name}<br>남은 적 ${remaining}/${s.totalEnemies}`;
+    }
 
     const covered = s.cover.active;
     this.stance.classList.toggle('cover', covered);

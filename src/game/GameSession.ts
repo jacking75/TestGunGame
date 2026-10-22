@@ -2,7 +2,7 @@ import { Enemy, type HitPart } from '../actors/Enemy';
 import type { Point } from '../calibration/homography';
 import type { InputFrame } from '../input/types';
 import type { StageDef, Vec3 } from '../stage/types';
-import { GAME } from './config';
+import { FREE_MOVE, GAME } from './config';
 import { Cover } from './Cover';
 import { createRandom } from './random';
 import { Weapon } from './Weapon';
@@ -17,6 +17,8 @@ export type HitResolver = (aim: Point) => HitResult;
 
 export type Phase = 'combat' | 'waveGap' | 'travel' | 'cleared' | 'failed';
 export type FailReason = 'hp' | 'time';
+/** rail: A→B→C 자동 이동 스테이지. free: 십자 버튼으로 움직이는 자유 이동 시험장(T13) */
+export type GameMode = 'rail' | 'free';
 
 export type GameEvent =
   | { type: 'shot'; aim: Point }
@@ -67,6 +69,10 @@ export class GameSession {
   pointIndex = 0;
   waveIndex = 0;
   failReason: FailReason | null = null;
+  /** 자유 이동 시험장에서 시작 위치로부터 움직인 거리(x 오른쪽, z 뒤쪽) */
+  offset = { x: 0, z: 0 };
+  /** 마지막 프레임에 실제로 적용한 이동 입력(화면 표시용) */
+  lastMove: Point = { x: 0, y: 0 };
 
   private phaseTime = 0;
   private nextEnemyId = 1;
@@ -75,8 +81,11 @@ export class GameSession {
   constructor(
     readonly stage: StageDef,
     seed = 1,
+    readonly mode: GameMode = 'rail',
   ) {
     this.random = createRandom(seed);
+    // 시험장은 기다리지 않고 첫 프레임에 표적을 세운다.
+    if (mode === 'free') this.phaseTime = FREE_MOVE.respawn;
   }
 
   get finished(): boolean {
@@ -98,6 +107,11 @@ export class GameSession {
   /** 현재 카메라가 있어야 할 위치(엄폐 자세 낮춤은 렌더러의 연출이다) */
   get view(): CameraView {
     const p = this.stage.points[this.pointIndex];
+    if (this.mode === 'free') {
+      // 옆걸음·앞뒤 이동만 하고 시선 방향은 처음 전방 그대로 둔다.
+      const { x, z } = this.offset;
+      return { eye: [p.eye[0] + x, p.eye[1], p.eye[2] + z], look: [p.look[0] + x, p.look[1], p.look[2] + z] };
+    }
     if (this.phase !== 'travel') return { eye: p.eye, look: p.look };
     const next = this.stage.points[this.pointIndex + 1];
     const t = smoothstep(this.travelProgress);
@@ -112,7 +126,7 @@ export class GameSession {
     this.stats.playTime += dt;
     this.phaseTime += dt;
     const fighting = this.phase === 'combat' || this.phase === 'waveGap';
-    if (fighting) this.timeLeft = Math.max(0, this.timeLeft - dt);
+    if (fighting && this.mode === 'rail') this.timeLeft = Math.max(0, this.timeLeft - dt);
 
     // 1) 엄폐: 누른 순간부터 보호. 이동 중에는 엄폐하지 않는다.
     const cover = this.cover.update(input.coverHeld && fighting, dt);
@@ -122,6 +136,10 @@ export class GameSession {
       this.weapon.refill();
       events.push({ type: 'reloaded' });
     }
+
+    // 1-1) 자유 이동: 엄폐 중에는 움직이지 않는다.
+    this.lastMove = this.mode === 'free' && fighting && !this.cover.active ? input.move : { x: 0, y: 0 };
+    if (this.mode === 'free') this.walk(this.lastMove, dt);
 
     // 2) 플레이어 발사
     for (const press of input.firePresses) this.fire(press.aim, resolveHit, events);
@@ -143,10 +161,11 @@ export class GameSession {
     }
 
     // 4) 웨이브·이동
-    this.advance(events);
+    if (this.mode === 'free') this.advanceFree(events);
+    else this.advance(events);
 
-    // 5) 종료 판정: 클리어가 먼저 확정되면 실패로 바꾸지 않는다.
-    if (!this.finished) {
+    // 5) 종료 판정: 클리어가 먼저 확정되면 실패로 바꾸지 않는다. 자유 이동 시험장은 끝나지 않는다.
+    if (!this.finished && this.mode === 'rail') {
       if (this.hp <= 0) this.fail('hp', events);
       else if (this.timeLeft <= 0) this.fail('time', events);
     }
@@ -228,6 +247,59 @@ export class GameSession {
     }
   }
 
+  /** 자유 이동: 표적을 모두 쓰러뜨리면 잠시 뒤 다시 세운다. 적은 공격하지 않는 표적이다. */
+  private advanceFree(events: GameEvent[]): void {
+    if (this.phase === 'waveGap') {
+      if (this.phaseTime < FREE_MOVE.respawn) return;
+      this.enemies.clear();
+      this.spawnWave();
+      this.setPhase('combat');
+      events.push({ type: 'waveStart', point: 0, wave: 0 });
+    } else if (this.phase === 'combat' && ![...this.enemies.values()].some((e) => e.alive)) {
+      this.setPhase('waveGap');
+    }
+  }
+
+  /** 자유 이동: 표적을 바로 다시 세운다. */
+  resetTargets(): void {
+    if (this.mode !== 'free') return;
+    this.enemies.clear();
+    this.setPhase('waveGap');
+    this.phaseTime = FREE_MOVE.respawn;
+  }
+
+  /** 자유 이동: 시작 위치로 돌아간다. */
+  returnToStart(): void {
+    this.offset = { x: 0, z: 0 };
+  }
+
+  /** 십자 버튼(위 = 전진, 좌우 = 옆걸음)으로 평면 이동. 대각선은 빨라지지 않고, 벽·상자·구역 끝에서 멈춘다. */
+  private walk(move: Point, dt: number): void {
+    const len = Math.hypot(move.x, move.y);
+    if (len === 0) return;
+    const step = (FREE_MOVE.speed * dt) / len;
+    const dx = move.x * step;
+    const dz = -move.y * step;
+    // 축마다 따로 막아서 벽에 비스듬히 닿아도 벽을 따라 미끄러지게 한다.
+    const nx = clamp(this.offset.x + dx, -FREE_MOVE.halfX, FREE_MOVE.halfX);
+    if (!this.blocked(nx, this.offset.z)) this.offset.x = nx;
+    const nz = clamp(this.offset.z + dz, -FREE_MOVE.halfZ, FREE_MOVE.halfZ);
+    if (!this.blocked(this.offset.x, nz)) this.offset.z = nz;
+  }
+
+  private blocked(ox: number, oz: number): boolean {
+    const eye = this.stage.points[0].eye;
+    const x = eye[0] + ox;
+    const z = eye[2] + oz;
+    const r = FREE_MOVE.radius;
+    return this.stage.geometry.some(
+      (b) =>
+        b.kind !== 'floor' &&
+        Math.abs(x - b.center[0]) < b.size[0] / 2 + r &&
+        Math.abs(z - b.center[2]) < b.size[2] / 2 + r,
+    );
+  }
+
   private spawnWave(): void {
     const wave = this.stage.points[this.pointIndex].waves[this.waveIndex];
     for (const def of wave.enemies) {
@@ -246,6 +318,10 @@ export class GameSession {
     this.phase = phase;
     this.phaseTime = 0;
   }
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
 }
 
 function smoothstep(t: number): number {
