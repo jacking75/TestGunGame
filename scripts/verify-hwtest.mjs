@@ -1,4 +1,4 @@
-// Wii 총 검증 앱의 흐름 확인: 실행 파일을 모의 입력(--sim, 마우스 = 총)으로 띄우고 16단계를 끝까지 진행한다.
+// Wii 총 검증 앱의 흐름 확인: 실행 파일을 모의 입력(--sim, 마우스 = 총)으로 띄우고 14단계를 끝까지 진행한다.
 // 실제 리모컨은 쓰지 않는다. 사용자 데이터를 건드리지 않도록 임시 데이터 폴더를 쓴다.
 //
 //   npm run hwtest:build && npm run hwtest:verify
@@ -234,31 +234,16 @@ async function main() {
       }
       await sleep(80);
     }
-    await waitStep('focus', 5000);
-    await press();
-    await keyDown('ArrowUp', 'ArrowUp');
-    await c.eval("window.dispatchEvent(new Event('blur'))");
-    await sleep(300);
-    await release();
-    await keyUp('ArrowUp', 'ArrowUp');
-    await c.eval("window.dispatchEvent(new Event('focus'))");
-    await sleep(200);
-    await click();
-    await waitStep('power', 6000);
-    await sleep(300);
-    await key('KeyP', 'p');
-    await sleep(700);
-    await key('KeyP', 'p');
     await waitStep('done', 6000);
     await sleep(800);
-    await shot('16-done');
+    await shot('14-done');
 
     const results = await c.eval('JSON.parse(JSON.stringify(window.__hwtest.runner.results))');
     for (const [id, r] of Object.entries(results)) checks.push({ id, pass: r.pass, text: r.text });
     const saved = fs.readdirSync(path.join(dataDir, 'results'));
     const logLines = fs.readFileSync(path.join(dataDir, 'logs', 'hw-test.log'), 'utf8').trim().split('\n').length;
     const recs = fs.existsSync(path.join(dataDir, 'recordings')) ? fs.readdirSync(path.join(dataDir, 'recordings')) : [];
-    const ok = recs.length === 1 && checks.length === 15 && checks.every((x) => x.pass) && saved.length === 1;
+    const ok = recs.length === 1 && checks.length === 13 && checks.every((x) => x.pass) && saved.length === 1;
     fs.writeFileSync(path.join(OUT, 'result.json'), JSON.stringify({ ok, view, checks, savedResult: saved[0], recording: recs[0], logLines }, null, 2));
     for (const x of checks) log(x.pass ? '통과' : '미달', x.id, x.text);
     log(ok ? '흐름 확인 통과' : '흐름 확인 실패', `결과 파일 ${saved.length}개, 녹화 파일 ${recs.length}개, 기록 ${logLines}줄`);

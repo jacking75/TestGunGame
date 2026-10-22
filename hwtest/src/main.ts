@@ -54,8 +54,6 @@ type StepId =
   | 'roll'
   | 'move'
   | 'play'
-  | 'focus'
-  | 'power'
   | 'done';
 
 const STEPS: { id: StepId; name: string }[] = [
@@ -72,8 +70,6 @@ const STEPS: { id: StepId; name: string }[] = [
   { id: 'roll', name: '비틀기' },
   { id: 'move', name: '이동하며 사격' },
   { id: 'play', name: '실전 사격' },
-  { id: 'focus', name: '창 전환' },
-  { id: 'power', name: '전원·재연결' },
   { id: 'done', name: '결과' },
 ];
 
@@ -234,8 +230,6 @@ class Runner {
 
   constructor(private readonly pad: Pad) {
     this.prev = pad.buttons;
-    window.addEventListener('blur', () => this.onFocus(false));
-    window.addEventListener('focus', () => this.onFocus(true));
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyR' && !e.repeat) this.enter(this.index);
     });
@@ -320,7 +314,7 @@ class Runner {
       return;
     }
     // 연결이 끊기면 이 단계에서 다시 연결을 기다린다(전원 시험 단계는 끊김 자체를 잰다).
-    if (!pad.connected && !['connect', 'power', 'done'].includes(this.step)) {
+    if (!pad.connected && !['connect', 'done'].includes(this.step)) {
       if (!this.s.reconnect) {
         this.disconnects++;
         log('unexpected-disconnect', { step: this.step });
@@ -364,10 +358,6 @@ class Runner {
         return this.updateMove(fires, b);
       case 'play':
         return this.updatePlay(dt, fires, b);
-      case 'focus':
-        return this.updateFocus(fires);
-      case 'power':
-        return this.updatePower();
       default:
         showCross(null, false);
     }
@@ -945,96 +935,7 @@ class Runner {
     );
   }
 
-  // ───── 14. 창 전환(포커스 상실) ─────
-
-  private onFocus(focused: boolean): void {
-    if (this.step !== 'focus' || this.passedAt !== null) return;
-    const b = this.pad.buttons;
-    if (!focused) {
-      this.s.blurred = true;
-      this.s.fireHeldAtBlur = this.pad.fireHeld;
-      this.s.dpadHeldAtBlur = b.up || b.down || b.left || b.right;
-      this.s.blurAt = performance.now();
-      log('blur', { fireHeld: this.pad.fireHeld, dpadHeld: this.s.dpadHeldAtBlur });
-      recordMark('blur');
-    } else if (this.s.blurred) {
-      this.s.returned = true;
-      this.s.fireHeldOnReturn = this.pad.fireHeld;
-      this.s.awaySeconds = (performance.now() - (this.s.blurAt as number)) / 1000;
-      this.pad.takeFires();
-      log('focus', { fireHeld: this.pad.fireHeld, awaySeconds: this.s.awaySeconds });
-      recordMark('focus');
-    }
-  }
-
-  private updateFocus(fires: (Point | null)[]): void {
-    const pad = this.pad;
-    const b = pad.buttons;
-    showCross(null, false);
-    if (!this.s.blurred) {
-      say(
-        '방아쇠를 당긴 채로 키보드 Alt+Tab을 눌러 다른 창으로 가세요',
-        '할 수 있으면 십자 ↑도 함께 누릅니다. 다른 창으로 가면 모두 놓고, 다시 Alt+Tab으로 이 창에 돌아오세요.',
-        pad.fireHeld ? `방아쇠 당김${b.up ? ' · ↑ 누름' : ''} — 이제 Alt+Tab` : '',
-      );
-      return;
-    }
-    if (!this.s.returned) {
-      say('다시 Alt+Tab으로 이 창에 돌아오세요', '방아쇠와 십자 버튼은 놓은 상태로 돌아옵니다.', '');
-      return;
-    }
-    if (!this.s.shotAt) {
-      if (fires.length) {
-        this.s.shotAt = performance.now();
-        this.s.shots = fires.length;
-        beep(520, 40);
-      } else {
-        say('돌아왔습니다. 방아쇠를 한 번만 당기세요', '창을 오가도 방아쇠가 정상인지 확인합니다.', pad.fireHeld ? '방아쇠를 아직 당기고 있습니다 — 놓았다가 한 번 당기세요' : '');
-      }
-      return;
-    }
-    this.s.shots = (this.s.shots as number) + fires.length;
-    if (performance.now() - (this.s.shotAt as number) < 600) return;
-    const shots = this.s.shots as number;
-    const dpadStuck = b.up || b.down || b.left || b.right;
-    const pass = shots === 1 && this.s.fireHeldAtBlur === true && !dpadStuck;
-    const text = pass
-      ? `창을 오간 뒤에도 방아쇠 1회 = 1발, 십자 버튼 고착 없음 (다른 창에 ${(this.s.awaySeconds as number).toFixed(1)}초${this.s.dpadHeldAtBlur ? ', ↑ 누른 채 전환' : ''})`
-      : this.s.fireHeldAtBlur !== true
-        ? '창을 바꿀 때 방아쇠를 당기고 있지 않았습니다(HOME 길게 눌러 다시)'
-        : dpadStuck
-          ? '돌아온 뒤에도 십자 버튼이 눌린 것으로 보입니다'
-          : `돌아온 뒤 한 번 당김에 ${shots}발 인식`;
-    this.pass({ pass, text, data: { fireHeldAtBlur: this.s.fireHeldAtBlur, dpadHeldAtBlur: this.s.dpadHeldAtBlur, fireHeldOnReturn: this.s.fireHeldOnReturn, shots, awaySeconds: this.s.awaySeconds } });
-  }
-
-  // ───── 15. 전원 끄기·다시 켜기 ─────
-
-  private updatePower(): void {
-    const pad = this.pad;
-    showCross(null, false);
-    if (!this.s.off) {
-      if (!pad.connected) {
-        this.s.off = true;
-        this.s.offAt = performance.now();
-        recordMark('power-off');
-        beep(440, 120);
-        return;
-      }
-      // Wii 리모컨은 전원 버튼으로 꺼지지 않는다(2026-10-22 실물). 건전지를 빼야 끊긴다.
-      say('리모컨의 건전지를 빼세요', '전원 버튼으로는 꺼지지 않습니다. 건전지를 빼면 끊김을 감지합니다.', '');
-      return;
-    }
-    if (pad.connected) {
-      const sec = (performance.now() - (this.s.offAt as number)) / 1000;
-      recordMark('power-on');
-      this.pass({ pass: true, text: `끊김 감지 → 아무 버튼으로 다시 연결 (꺼진 뒤 ${sec.toFixed(1)}초)`, data: { secondsUntilReconnect: sec, info: pad.info } });
-      return;
-    }
-    say('끊김을 감지했습니다. 건전지를 다시 넣고 아무 버튼이나 누르세요', 'SYNC가 아닌 보통 버튼(A 등)입니다. 자동으로 다시 연결되어야 합니다.', pad.status);
-  }
-
-  // ───── 16. 결과 ─────
+  // ───── 14. 결과 ─────
 
   private finishAll(): void {
     showCross(null, false);
