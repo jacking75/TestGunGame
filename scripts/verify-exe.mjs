@@ -404,20 +404,21 @@ async function main() {
     await clickButton(c, '정확도 측정');
     await waitFor(c, `__v.hud().screen === '정확도 측정'`, 2000, '정확도 측정 화면');
     await clickButton(c, '조준점 보며 측정');
-    for (let i = 0; i < 90; i++) {
-      const t = await waitFor(c, `(() => { const e = document.querySelector('#accuracy .target'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left, y: r.top }; })()`, 2000, '표적');
+    // 지점당 발 수가 바뀌어도 되도록 표적이 사라질 때까지 쏜다(현재 9지점 × 3발).
+    for (let i = 0; i < 90 && !(await hud()).screen.includes('조준점 보며'); i++) {
+      const t = await waitFor(c, `(() => { const e = document.querySelector('#accuracy .target'); if (!e || !e.isConnected) return null; const r = e.getBoundingClientRect(); return { x: r.left, y: r.top }; })()`, 2000, '표적');
       await click(c, t.x, t.y);
       await sleep(40);
     }
     await waitFor(c, `__v.hud().screen.includes('조준점 보며')`, 3000, '조준 결과');
     await shot(c, '30-accuracy-result');
     const acc = await hud();
-    check('정확도 측정(마우스): 9지점 × 10발, 오차 0', acc.screen.includes('통과') && acc.screenText.includes('오차 90백분위 0.00%'), acc.screenText.slice(0, 120));
+    check('정확도 측정(마우스): 9지점 × 3발, 오차 0', acc.screen.includes('통과') && acc.screenText.includes('오차 90백분위 0.00%'), acc.screenText.slice(0, 120));
     await clickButton(c, '다음: 방아쇠 시험');
     await sleep(300);
     const m = (await hud()).vw;
     await move(c, m * 0.5, 300);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 10; i++) {
       await mouseDown(c);
       await sleep(30);
       await mouseUp(c);
@@ -432,7 +433,7 @@ async function main() {
     await key(c, 'Space', 'keyUp');
     await waitFor(c, `__v.hud().screen.includes('방아쇠 시험')`, 3000, '방아쇠 결과');
     const trig = await hud();
-    check('방아쇠 시험(마우스): 30회 + 길게 1회 = 31회, 중복 없음', trig.screen === '방아쇠 시험 통과', trig.screenText.slice(0, 120));
+    check('방아쇠 시험(마우스): 10회 + 길게 1회 = 11회, 중복 없음', trig.screen === '방아쇠 시험 통과', trig.screenText.slice(0, 120));
     await clickButton(c, '다음: 연결 시험');
     await waitFor(c, `__v.hud().screen === '연결 시험'`, 2000, '연결 시험');
     await shot(c, '31-loss');

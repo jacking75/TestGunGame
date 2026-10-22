@@ -16,6 +16,9 @@ const COLORS: Record<BoxKind, number> = {
 
 const MAX_DECALS = 40;
 const DECAL_LIFE = 8;
+/** 빗나간 발사를 살펴볼 반지름(화면 짧은 변 비율). 실물 Wii 조준 오차 90%가 3.9~5.6%였다(2026-10-22). */
+const AIM_ASSIST_RINGS = [0.02, 0.04, 0.06];
+const AIM_ASSIST_DIRS = 8;
 /** 엄폐 시 카메라를 내리는 거리. 눈이 가림막(높이 1.1) 윗면 바로 아래로 내려가 화면 아래 대부분이 가려진다. */
 const COVER_DROP = 0.62;
 const COVER_SPEED = 9;
@@ -109,9 +112,26 @@ export class World {
   /** 화면 좌표(0~1)에서 카메라 광선을 쏴 가장 앞의 충돌체를 찾는다. */
   resolveHit = (aim: Point): HitResult => {
     this.camera.updateMatrixWorld();
-    this.raycaster.setFromCamera(new THREE.Vector2(aim.x * 2 - 1, -(aim.y * 2 - 1)), this.camera);
     const targets: THREE.Object3D[] = [...this.staticColliders];
     for (const v of this.views.values()) if (v.enemy.alive) targets.push(...v.hitboxes);
+    const center = this.castAt(aim, targets);
+    if (center.kind === 'enemy') return center;
+    // 빗나간 발사는 조준점 둘레를 안쪽부터 살펴 가장 가까운 적을 맞힌 것으로 본다(벽 너머는 첫 충돌이 벽이라 제외).
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const short = Math.min(size.x, size.y) || 1;
+    for (const r of AIM_ASSIST_RINGS) {
+      for (let i = 0; i < AIM_ASSIST_DIRS; i++) {
+        const a = (i / AIM_ASSIST_DIRS) * Math.PI * 2;
+        const p = { x: aim.x + (Math.cos(a) * r * short) / (size.x || 1), y: aim.y + (Math.sin(a) * r * short) / (size.y || 1) };
+        const hit = this.castAt(p, targets);
+        if (hit.kind === 'enemy') return { ...hit, part: 'body' };
+      }
+    }
+    return center;
+  };
+
+  private castAt(aim: Point, targets: THREE.Object3D[]): HitResult {
+    this.raycaster.setFromCamera(new THREE.Vector2(aim.x * 2 - 1, -(aim.y * 2 - 1)), this.camera);
     const hits = this.raycaster.intersectObjects(targets, false);
     const first = hits[0];
     if (!first) return { kind: 'none' };
@@ -120,7 +140,7 @@ export class World {
     if (data.enemyId !== undefined && data.part) return { kind: 'enemy', enemyId: data.enemyId, part: data.part, point };
     const n = first.face?.normal.clone().transformDirection(first.object.matrixWorld) ?? new THREE.Vector3(0, 0, 1);
     return { kind: 'world', point, normal: [n.x, n.y, n.z] };
-  };
+  }
 
   addBulletHole(point: Vec3, normal: Vec3): void {
     const mat = new THREE.MeshBasicMaterial({ color: 0x1d2024, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
