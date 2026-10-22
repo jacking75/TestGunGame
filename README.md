@@ -18,6 +18,7 @@ Windows에서 Wii 리모컨과 일반 USB 센서바를 사용하여 Three.js 기
 
 ```powershell
 npm run app:build  # 웹 빌드 + 실행 파일 빌드 → host\bin\Release\net48\ (TestGunGame.exe + game\)
+npm run app:pack   # 배포 압축 파일 → release\TestGunGame-<버전>.zip (풀어서 TestGunGame.exe 실행, 설치 없음)
 npm run app        # 빌드한 게임 실행
 npm run hwtest:build  # Wii 총 검증 앱 빌드 → hwtest\host\bin\Release\net48\ (WiiHwTest.exe + web\)
 npm run hwtest        # 검증 앱 실행

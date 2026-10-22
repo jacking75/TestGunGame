@@ -34,3 +34,6 @@ lerna-debug.log*
 /hwtest/dist
 /hwtest/host/bin
 /hwtest/host/obj
+
+# 배포 압축 파일
+/release
