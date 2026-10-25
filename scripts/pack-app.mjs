@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const src = path.resolve('host/bin/Release/net48');
+const src = path.resolve('host/bin/Release/net10.0');
 if (!fs.existsSync(path.join(src, 'TestGunGame.exe')) || !fs.existsSync(path.join(src, 'game', 'index.html'))) {
   execSync('npm run app:build', { stdio: 'inherit' });
 }
@@ -15,7 +15,7 @@ const stage = path.join(outDir, name);
 fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(stage, { recursive: true });
 
-// 디버그 기호(.pdb)는 넣지 않는다. 나머지(실행 파일·설정·WebView2 라이브러리·game 폴더)는 모두 필요하다.
+// 디버그 기호(.pdb)는 넣지 않는다. 나머지(실행 파일·.NET 런타임·Avalonia·WebView2 라이브러리·game 폴더)는 모두 필요하다.
 for (const entry of fs.readdirSync(src)) {
   if (entry.endsWith('.pdb')) continue;
   fs.cpSync(path.join(src, entry), path.join(stage, entry), { recursive: true });

@@ -20,19 +20,19 @@ Wii 리모컨(+ 총 모양 케이스)과 일반 USB 센서바를 Windows PC 게�
 | **TestGunGame** (`host/` + `src/`) | Wii 총으로 하는 시험용 게임. 레일 슈팅 1스테이지(A·B·C, 적 15명), 십자 버튼 자유 이동 시험장, 조준 보정, 정확도 측정, 입력 진단(F3) | `npm run app:build` → `npm run app` |
 | **WiiHwTest** (`hwtest/`) | 새 리모컨·PC·센서바 조합이 쓸 만한지 화면 지시만 따라 한 번에 재는 검증 앱(약 10분). 리모컨 입력을 녹화한다 | `npm run hwtest:build` → `npm run hwtest` |
 
-둘 다 Windows 실행 파일(C# .NET Framework 4.8 + WebView2) 안에 웹 화면(TypeScript·Three.js)을 띄운다. 창은 작업 표시줄이 보이는 최대화 창이다.
+둘 다 Windows 실행 파일(C# .NET 10 + Avalonia 12 + WebView2) 안에 웹 화면(TypeScript·Three.js)을 띄운다. .NET 런타임을 실행 파일 옆에 함께 넣으므로(자체 포함) 실행하는 PC에 설치할 것이 없다. 창은 작업 표시줄이 보이는 최대화 창이다.
 
 ## 준비
 
 - **장비:** Windows 10/11 PC(블루투스), 정품 Wii 리모컨(RVL-CNT-01), 일반 USB 센서바(모니터 위나 아래 가운데), 총 모양 케이스(없어도 됨). 구입 참고는 [참고서 0절](Wii-리모컨-PC-연결과-보정-3.md#0-필요한-장비).
-- **빌드 도구:** Node.js 24 이상, .NET SDK. 실행하는 PC에는 Windows 기본 구성 외에 설치할 것이 없다.
+- **빌드 도구:** Node.js 24 이상, .NET 10 SDK. 실행하는 PC에는 Windows 기본 구성 외에 설치할 것이 없다.
 
 ```powershell
 npm install
-npm run app:build     # 게임 빌드 → host\bin\Release\net48\TestGunGame.exe (+ game\)
+npm run app:build     # 게임 빌드 → host\bin\Release\net10.0\TestGunGame.exe (+ game\)
 npm run app           # 게임 실행
 npm run app:pack      # 다른 PC로 옮길 압축 파일 → release\TestGunGame-<버전>.zip (풀어서 바로 실행)
-npm run hwtest:build  # 검증 앱 빌드 → hwtest\host\bin\Release\net48\WiiHwTest.exe
+npm run hwtest:build  # 검증 앱 빌드 → hwtest\host\bin\Release\net10.0\WiiHwTest.exe
 npm run hwtest        # 검증 앱 실행
 ```
 

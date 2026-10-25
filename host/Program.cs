@@ -1,12 +1,19 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
-using System.Windows.Forms;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform;
+using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
 
 namespace TestGunGame.Host
 {
@@ -15,62 +22,108 @@ namespace TestGunGame.Host
         [STAThread]
         private static void Main(string[] args)
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
             // --dev <url>: Vite 개발 서버를 연다. 없으면 실행 파일 옆 game 폴더(빌드 결과)를 연다.
             string devUrl = Environment.GetEnvironmentVariable("TGG_DEV_URL");
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == "--dev") devUrl = args[i + 1];
-            Application.Run(new MainForm(devUrl));
+            AppBuilder.Configure(() => new App(devUrl)).UsePlatformDetect().StartWithClassicDesktopLifetime(args);
         }
     }
 
-    /// <summary>게임 창. WebView2에 게임을 띄우고 HID·블루투스 기능을 메시지로 제공한다.</summary>
-    internal sealed class MainForm : Form
+    internal sealed class App : Application
     {
-        private const string VirtualHost = "game.local";
         private readonly string devUrl;
-        private readonly WebView2 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(20, 24, 29) };
-        private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
-        private readonly Dictionary<int, HidConnection> connections = new Dictionary<int, HidConnection>();
-        private int nextHandle = 1;
-        private WiimotePairing pairing;
 
-        public MainForm(string devUrl)
+        public App(string devUrl)
         {
             this.devUrl = devUrl;
-            Text = "TestGunGame";
-            BackColor = Color.FromArgb(20, 24, 29);
-            ClientSize = new Size(1280, 720);
-            WindowState = FormWindowState.Maximized;
-            Controls.Add(web);
-            Load += async (s, e) => await InitAsync();
-            FormClosing += (s, e) =>
+        }
+
+        public override void Initialize() => Styles.Add(new FluentTheme());
+
+        public override void OnFrameworkInitializationCompleted()
+        {
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) desktop.MainWindow = new MainWindow(devUrl);
+            base.OnFrameworkInitializationCompleted();
+        }
+    }
+
+    /// <summary>게임 창. NativeWebView(WebView2)에 게임을 띄우고 HID·블루투스 기능을 메시지로 제공한다.</summary>
+    internal sealed class MainWindow : Window
+    {
+        private const string VirtualHost = "game.local";
+        private static readonly Color BackgroundColor = Color.FromRgb(20, 24, 29);
+        private static readonly JsonSerializerOptions Json = new JsonSerializerOptions { IncludeFields = true };
+        private readonly string devUrl;
+        private readonly Dictionary<int, HidConnection> connections = new Dictionary<int, HidConnection>();
+        private CoreWebView2 core;
+        private int nextHandle = 1;
+        private WiimotePairing pairing;
+        private bool closed;
+
+        public MainWindow(string devUrl)
+        {
+            this.devUrl = devUrl;
+            Title = "TestGunGame";
+            Background = new SolidColorBrush(BackgroundColor);
+            Width = 1280;
+            Height = 720;
+            // 작업 표시줄이 보이는 최대화 창. 전체 화면으로 바꾸지 않는다.
+            WindowState = WindowState.Maximized;
+            Closing += (s, e) =>
             {
+                closed = true;
                 pairing?.Cancel();
                 foreach (var c in connections.Values) c.Dispose();
                 connections.Clear();
             };
-        }
 
-        private async Task InitAsync()
-        {
-            string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TestGunGame", "WebView2");
-            var options = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required");
-            CoreWebView2Environment env;
             try
             {
-                env = await CoreWebView2Environment.CreateAsync(null, dataDir, options);
+                CoreWebView2Environment.GetAvailableBrowserVersionString();
             }
             catch (WebView2RuntimeNotFoundException)
             {
-                MessageBox.Show(this,
-                    "Microsoft Edge WebView2 런타임이 필요합니다.\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703 에서 설치한 뒤 다시 실행하세요.",
-                    "TestGunGame", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Close();
+                ShowError("Microsoft Edge WebView2 런타임이 필요합니다.\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703 에서 설치한 뒤 다시 실행하세요.");
                 return;
             }
-            await web.EnsureCoreWebView2Async(env);
-            CoreWebView2 core = web.CoreWebView2;
+            var web = new NativeWebView { Background = new SolidColorBrush(BackgroundColor) };
+            web.EnvironmentRequested += OnEnvironmentRequested;
+            web.AdapterCreated += OnAdapterCreated;
+            Content = web;
+        }
+
+        private void ShowError(string message)
+        {
+            Content = new TextBlock
+            {
+                Text = message,
+                Foreground = Brushes.White,
+                FontSize = 18,
+                TextWrapping = TextWrapping.Wrap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+
+        private void OnEnvironmentRequested(object sender, WebViewEnvironmentRequestedEventArgs e)
+        {
+            e.EnableDevTools = devUrl != null;
+            if (e is WindowsWebView2EnvironmentRequestedEventArgs w)
+            {
+                w.UserDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TestGunGame", "WebView2");
+                w.AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required";
+            }
+        }
+
+        private void OnAdapterCreated(object sender, WebViewAdapterEventArgs e)
+        {
+            // Avalonia가 만든 WebView2를 받아 기존 WebView2 API(가상 호스트·JSON 메시지·설정)를 그대로 쓴다.
+            if (e.TryGetPlatformHandle() is not IWindowsWebView2PlatformHandle handle)
+            {
+                ShowError("WebView2를 시작하지 못했습니다.");
+                return;
+            }
+            core = CoreWebView2.CreateFromComICoreWebView2(handle.CoreWebView2);
             core.Settings.AreDevToolsEnabled = devUrl != null;
             core.Settings.AreDefaultContextMenusEnabled = devUrl != null;
             core.Settings.IsStatusBarEnabled = false;
@@ -84,7 +137,7 @@ namespace TestGunGame.Host
             }
             else
             {
-                string gameDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "game");
+                string gameDir = Path.Combine(AppContext.BaseDirectory, "game");
                 core.SetVirtualHostNameToFolderMapping(VirtualHost, gameDir, CoreWebView2HostResourceAccessKind.Allow);
                 core.Navigate("https://" + VirtualHost + "/index.html");
             }
@@ -96,17 +149,19 @@ namespace TestGunGame.Host
 
         private void OnMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            Dictionary<string, object> msg;
+            JsonElement msg;
             try
             {
-                msg = json.Deserialize<Dictionary<string, object>>(e.WebMessageAsJson);
+                using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+                msg = doc.RootElement.Clone();
             }
             catch
             {
                 return;
             }
-            object id = msg.TryGetValue("id", out object v) ? v : null;
-            string cmd = msg.TryGetValue("cmd", out object c) ? c as string : null;
+            if (msg.ValueKind != JsonValueKind.Object) return;
+            object id = msg.TryGetProperty("id", out JsonElement v) ? v : null;
+            string cmd = msg.TryGetProperty("cmd", out JsonElement c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
             try
             {
                 object result = Dispatch(cmd, msg, id);
@@ -120,19 +175,19 @@ namespace TestGunGame.Host
 
         private static readonly object Pending = new object();
 
-        private object Dispatch(string cmd, Dictionary<string, object> msg, object id)
+        private object Dispatch(string cmd, JsonElement msg, object id)
         {
             switch (cmd)
             {
                 case "host.info":
-                    return new Dictionary<string, object> { ["version"] = Application.ProductVersion, ["canPair"] = true };
+                    return new Dictionary<string, object> { ["version"] = ProductVersion, ["canPair"] = true };
 
                 case "hid.list":
                     return HidDevices.List();
 
                 case "hid.open":
                 {
-                    string path = (string)msg["path"];
+                    string path = msg.GetProperty("path").GetString();
                     HidInfo info = HidDevices.List().Find(d => d.path == path) ?? throw new InvalidOperationException("장치가 없습니다");
                     int handle = nextHandle++;
                     connections[handle] = new HidConnection(handle, info, OnReport, OnClosed);
@@ -141,12 +196,10 @@ namespace TestGunGame.Host
 
                 case "hid.write":
                 {
-                    int handle = Convert.ToInt32(msg["handle"]);
+                    int handle = msg.GetProperty("handle").GetInt32();
                     if (!connections.TryGetValue(handle, out HidConnection conn)) throw new InvalidOperationException("닫힌 장치입니다");
-                    byte reportId = Convert.ToByte(msg["reportId"]);
-                    var list = (System.Collections.ArrayList)msg["data"];
-                    var data = new byte[list.Count];
-                    for (int i = 0; i < data.Length; i++) data[i] = Convert.ToByte(list[i]);
+                    byte reportId = msg.GetProperty("reportId").GetByte();
+                    byte[] data = msg.GetProperty("data").EnumerateArray().Select(b => b.GetByte()).ToArray();
                     // 블루투스 쓰기는 수 ms 걸릴 수 있으므로 화면 스레드를 막지 않는다.
                     Task.Run(() =>
                     {
@@ -165,7 +218,7 @@ namespace TestGunGame.Host
 
                 case "hid.close":
                 {
-                    int handle = Convert.ToInt32(msg["handle"]);
+                    int handle = msg.GetProperty("handle").GetInt32();
                     if (connections.TryGetValue(handle, out HidConnection conn))
                     {
                         connections.Remove(handle);
@@ -177,7 +230,7 @@ namespace TestGunGame.Host
                 case "bt.pair":
                 {
                     if (pairing != null) throw new InvalidOperationException("이미 등록을 진행 중입니다");
-                    int seconds = msg.TryGetValue("seconds", out object s) ? Convert.ToInt32(s) : 120;
+                    int seconds = msg.TryGetProperty("seconds", out JsonElement s) ? s.GetInt32() : 120;
                     var p = new WiimotePairing(progress => Post(() => Send(new Dictionary<string, object>(progress) { ["event"] = "bt.progress" })));
                     pairing = p;
                     Task.Run(() =>
@@ -205,13 +258,16 @@ namespace TestGunGame.Host
                     return true;
 
                 case "log.append":
-                    HardwareLog.Append(msg.TryGetValue("line", out object line) ? line as string : null);
+                    HardwareLog.Append(msg.TryGetProperty("line", out JsonElement line) && line.ValueKind == JsonValueKind.String ? line.GetString() : null);
                     return true;
 
                 default:
                     throw new InvalidOperationException("알 수 없는 명령: " + cmd);
             }
         }
+
+        private static string ProductVersion =>
+            Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
 
         private void OnReport(int handle, byte[] report)
         {
@@ -242,21 +298,18 @@ namespace TestGunGame.Host
 
         private void Send(object message)
         {
-            if (web.CoreWebView2 == null || IsDisposed) return;
-            web.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));
+            if (core == null || closed) return;
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json));
         }
 
         private void Post(Action a)
         {
-            if (IsDisposed || !IsHandleCreated) return;
-            try
+            if (closed) return;
+            Dispatcher.UIThread.Post(() =>
             {
-                BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
-                // 창이 닫히는 중
-            }
+                // 창이 닫히는 중이면 버린다.
+                if (!closed) a();
+            });
         }
     }
 }

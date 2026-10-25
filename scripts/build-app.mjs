@@ -6,7 +6,7 @@ import path from 'node:path';
 const run = (cmd) => execSync(cmd, { stdio: 'inherit' });
 run('npm run build');
 run('dotnet build host -c Release --nologo -v q');
-const out = path.resolve('host/bin/Release/net48');
+const out = path.resolve('host/bin/Release/net10.0');
 const game = path.join(out, 'game');
 fs.rmSync(game, { recursive: true, force: true });
 fs.cpSync(path.resolve('dist'), game, { recursive: true });

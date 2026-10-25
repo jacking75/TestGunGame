@@ -21,7 +21,7 @@
 
 | 항목 | 채택한 방식 | 재사용할 코드 |
 |---|---|---|
-| 배포 형태 | 작은 Windows 실행 파일(C# .NET Framework 4.8 + WebView2) 안에 웹 게임을 띄운다. **작업 표시줄이 보이는 최대화 창**으로 실행하고 전체 화면으로 바꾸지 않는다(10절) | `host/` 전체 |
+| 배포 형태 | Windows 실행 파일(C# .NET 10 + Avalonia 12, 웹 표시는 WebView2) 안에 웹 게임을 띄운다. **작업 표시줄이 보이는 최대화 창**으로 실행하고 전체 화면으로 바꾸지 않는다(10절) | `host/` 전체 |
 | 리모컨 등록 | 게임 안에서 Windows 블루투스 API로 직접 등록. 사용자는 **SYNC 버튼만** 누른다. 영구 등록(인증 콜백 + 원본 바이트 PIN) 성공 확인(2026-10-21). 이후 게임 실행 중 아무 버튼으로 연결(PC 재부팅 후 포함), 안 되면 같은 SYNC 안에서 임시 연결(3.2) | `host/WiimotePairing.cs`, `host/Native.cs` |
 | 데이터 송수신 | C#이 HID 원본 바이트만 주고받고, 해석은 TypeScript가 한다 | `host/HidDevices.cs`, `src/input/wiimote/hid.ts` |
 | 프로토콜 | IR 확장 모드 + 연속 보고(0x12 `04 33`) | `src/input/wiimote/protocol.ts`, `WiimoteDevice.ts` |
@@ -52,7 +52,8 @@
 | 개발자용 PowerShell 등록 스크립트 | — | 다른 사용자에게 줄 수 없음. 게임 안에서 해야 함 |
 | Electron | — | 용량이 큼(100MB+) |
 | Tauri | — | Rust 빌드가 느림. WebView2는 WebHID도 없음 |
-| **C# .NET Framework 4.8 + WebView2** | **성공** | Windows 10/11 기본 내장, 추가 런타임 없음, 실행 파일+DLL 약 1.3MB, 빌드 수 초 |
+| C# .NET Framework 4.8 + WinForms + WebView2 | 성공(2026-10-25까지 사용) | Windows 10/11 기본 내장, 추가 런타임 없음, 실행 파일+DLL 약 1.3MB. .NET Framework는 더 발전하지 않아 아래로 옮겼다 |
+| **C# .NET 10 + Avalonia 12 + WebView2** | **성공(현재)** | Avalonia `NativeWebView`(MIT)가 WebView2를 띄우고, 원본 `ICoreWebView2`를 받아 가상 호스트·JSON 메시지 코드를 그대로 쓴다. .NET 런타임 자체 포함이라 추가 설치 없음. 대신 배포 zip 약 45MB |
 
 ## 3. 블루투스 등록 — 핵심 사실과 순서
 

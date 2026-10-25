@@ -11,7 +11,7 @@ import path from 'node:path';
 
 const PORT = 25005;
 const OUT = path.resolve('logs/hwtest');
-const EXE = path.resolve('hwtest/host/bin/Release/net48/WiiHwTest.exe');
+const EXE = path.resolve('hwtest/host/bin/Release/net10.0/WiiHwTest.exe');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 

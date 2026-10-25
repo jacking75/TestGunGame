@@ -15,7 +15,7 @@ const args = Object.fromEntries(
 const RUNS = Number(args.runs ?? 3);
 const OUT = path.resolve(args.out ?? 'logs/t10');
 const PORT = 25003;
-const EXE = path.resolve('host/bin/Release/net48/TestGunGame.exe');
+const EXE = path.resolve('host/bin/Release/net10.0/TestGunGame.exe');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);

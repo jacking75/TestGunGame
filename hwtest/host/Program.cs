@@ -1,14 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
-using System.Web.Script.Serialization;
-using System.Windows.Forms;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform;
+using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
 using TestGunGame.Host;
 
 namespace WiiHwTest
@@ -18,8 +25,6 @@ namespace WiiHwTest
         [STAThread]
         private static void Main(string[] args)
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
             // --dev <url>: Vite 개발 서버를 연다. --sim: 리모컨 없이 마우스로 흐름을 확인한다(자동 검증용).
             string devUrl = null;
             bool sim = false;
@@ -28,7 +33,27 @@ namespace WiiHwTest
                 if (args[i] == "--dev" && i + 1 < args.Length) devUrl = args[i + 1];
                 if (args[i] == "--sim") sim = true;
             }
-            Application.Run(new MainForm(devUrl, sim));
+            AppBuilder.Configure(() => new App(devUrl, sim)).UsePlatformDetect().StartWithClassicDesktopLifetime(args);
+        }
+    }
+
+    internal sealed class App : Application
+    {
+        private readonly string devUrl;
+        private readonly bool sim;
+
+        public App(string devUrl, bool sim)
+        {
+            this.devUrl = devUrl;
+            this.sim = sim;
+        }
+
+        public override void Initialize() => Styles.Add(new FluentTheme());
+
+        public override void OnFrameworkInitializationCompleted()
+        {
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop) desktop.MainWindow = new MainWindow(devUrl, sim);
+            base.OnFrameworkInitializationCompleted();
         }
     }
 
@@ -37,69 +62,99 @@ namespace WiiHwTest
     /// 기록: %LOCALAPPDATA%\WiiHwTest\logs\hw-test.log, 결과: %LOCALAPPDATA%\WiiHwTest\results\*.json,
     /// 입력 녹화: %LOCALAPPDATA%\WiiHwTest\recordings\*.jsonl
     /// </summary>
-    internal sealed class MainForm : Form
+    internal sealed class MainWindow : Window
     {
         private const string VirtualHost = "hwtest.local";
+        private static readonly Color BackgroundColor = Color.FromRgb(16, 19, 24);
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false);
+        private static readonly JsonSerializerOptions Json = new JsonSerializerOptions { IncludeFields = true };
         private readonly string devUrl;
         private readonly bool sim;
         private readonly string baseDir =
             Environment.GetEnvironmentVariable("WHT_DATA_DIR") is string d && d.Length > 0
                 ? d
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WiiHwTest");
-        private readonly WebView2 web = new WebView2 { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(16, 19, 24) };
-        private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
         private readonly Dictionary<int, HidConnection> connections = new Dictionary<int, HidConnection>();
+        private CoreWebView2 core;
         private int nextHandle = 1;
         private WiimotePairing pairing;
         private int closedGame;
+        private bool closed;
         /// <summary>이번 실행의 리모컨 입력 녹화 파일(게임 자동 검증에서 재생한다)</summary>
         private readonly string recordPath;
 
-        public MainForm(string devUrl, bool sim)
+        public MainWindow(string devUrl, bool sim)
         {
             this.devUrl = devUrl;
             this.sim = sim;
             recordPath = Path.Combine(baseDir, "recordings", DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".jsonl");
-            Text = "Wii 총 검증";
-            BackColor = Color.FromArgb(16, 19, 24);
-            ClientSize = new Size(1280, 720);
+            Title = "Wii 총 검증";
+            Background = new SolidColorBrush(BackgroundColor);
+            Width = 1280;
+            Height = 720;
             // 작업 표시줄이 보이는 최대화 창. 전체 화면으로 바꾸지 않는다.
-            WindowState = FormWindowState.Maximized;
-            Controls.Add(web);
-            Load += async (s, e) => await InitAsync();
-            FormClosing += (s, e) =>
+            WindowState = WindowState.Maximized;
+            Closing += (s, e) =>
             {
+                closed = true;
                 pairing?.Cancel();
                 foreach (var c in connections.Values) c.Dispose();
                 connections.Clear();
             };
+
+            // 리모컨은 한 프로그램만 쓸 수 있으므로 게임이 켜져 있으면 닫는다.
+            if (!sim) closedGame = CloseGame();
+
+            try
+            {
+                CoreWebView2Environment.GetAvailableBrowserVersionString();
+            }
+            catch (WebView2RuntimeNotFoundException)
+            {
+                ShowError("Microsoft Edge WebView2 런타임이 필요합니다.\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703 에서 설치한 뒤 다시 실행하세요.");
+                return;
+            }
+            var web = new NativeWebView { Background = new SolidColorBrush(BackgroundColor) };
+            web.EnvironmentRequested += OnEnvironmentRequested;
+            web.AdapterCreated += OnAdapterCreated;
+            Content = web;
         }
 
         private string LogDir => Path.Combine(baseDir, "logs");
         private string LogPath => Path.Combine(LogDir, "hw-test.log");
 
-        private async Task InitAsync()
+        private void ShowError(string message)
         {
-            // 리모컨은 한 프로그램만 쓸 수 있으므로 게임이 켜져 있으면 닫는다.
-            if (!sim) closedGame = CloseGame();
+            Content = new TextBlock
+            {
+                Text = message,
+                Foreground = Brushes.White,
+                FontSize = 18,
+                TextWrapping = TextWrapping.Wrap,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
 
-            var options = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required");
-            CoreWebView2Environment env;
-            try
+        private void OnEnvironmentRequested(object sender, WebViewEnvironmentRequestedEventArgs e)
+        {
+            e.EnableDevTools = devUrl != null;
+            if (e is WindowsWebView2EnvironmentRequestedEventArgs w)
             {
-                env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(baseDir, "WebView2"), options);
+                w.UserDataFolder = Path.Combine(baseDir, "WebView2");
+                w.AdditionalBrowserArguments = "--autoplay-policy=no-user-gesture-required";
             }
-            catch (WebView2RuntimeNotFoundException)
+        }
+
+        private void OnAdapterCreated(object sender, WebViewAdapterEventArgs e)
+        {
+            // Avalonia가 만든 WebView2를 받아 기존 WebView2 API(가상 호스트·JSON 메시지·설정)를 그대로 쓴다.
+            if (e.TryGetPlatformHandle() is not IWindowsWebView2PlatformHandle handle)
             {
-                MessageBox.Show(this,
-                    "Microsoft Edge WebView2 런타임이 필요합니다.\nhttps://go.microsoft.com/fwlink/p/?LinkId=2124703 에서 설치한 뒤 다시 실행하세요.",
-                    Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Close();
+                ShowError("WebView2를 시작하지 못했습니다.");
                 return;
             }
-            await web.EnsureCoreWebView2Async(env);
-            CoreWebView2 core = web.CoreWebView2;
+            core = CoreWebView2.CreateFromComICoreWebView2(handle.CoreWebView2);
             core.Settings.AreDevToolsEnabled = devUrl != null;
             core.Settings.AreDefaultContextMenusEnabled = devUrl != null;
             core.Settings.IsStatusBarEnabled = false;
@@ -113,7 +168,7 @@ namespace WiiHwTest
             }
             else
             {
-                string webDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "web");
+                string webDir = Path.Combine(AppContext.BaseDirectory, "web");
                 core.SetVirtualHostNameToFolderMapping(VirtualHost, webDir, CoreWebView2HostResourceAccessKind.Allow);
                 core.Navigate("https://" + VirtualHost + "/index.html" + query);
             }
@@ -147,17 +202,19 @@ namespace WiiHwTest
 
         private void OnMessage(object sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            Dictionary<string, object> msg;
+            JsonElement msg;
             try
             {
-                msg = json.Deserialize<Dictionary<string, object>>(e.WebMessageAsJson);
+                using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+                msg = doc.RootElement.Clone();
             }
             catch
             {
                 return;
             }
-            object id = msg.TryGetValue("id", out object v) ? v : null;
-            string cmd = msg.TryGetValue("cmd", out object c) ? c as string : null;
+            if (msg.ValueKind != JsonValueKind.Object) return;
+            object id = msg.TryGetProperty("id", out JsonElement v) ? v : null;
+            string cmd = Str(msg, "cmd");
             try
             {
                 object result = Dispatch(cmd, msg, id);
@@ -171,14 +228,17 @@ namespace WiiHwTest
 
         private static readonly object Pending = new object();
 
-        private object Dispatch(string cmd, Dictionary<string, object> msg, object id)
+        private static string Str(JsonElement msg, string key) =>
+            msg.TryGetProperty(key, out JsonElement v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+        private object Dispatch(string cmd, JsonElement msg, object id)
         {
             switch (cmd)
             {
                 case "host.info":
                     return new Dictionary<string, object>
                     {
-                        ["version"] = Application.ProductVersion,
+                        ["version"] = ProductVersion,
                         ["canPair"] = true,
                         ["closedGame"] = closedGame,
                         ["logPath"] = LogPath,
@@ -190,7 +250,7 @@ namespace WiiHwTest
 
                 case "hid.open":
                 {
-                    string path = (string)msg["path"];
+                    string path = msg.GetProperty("path").GetString();
                     HidInfo info = HidDevices.List().Find(x => x.path == path) ?? throw new InvalidOperationException("장치가 없습니다");
                     int handle = nextHandle++;
                     connections[handle] = new HidConnection(handle, info, OnReport, OnClosed);
@@ -199,12 +259,10 @@ namespace WiiHwTest
 
                 case "hid.write":
                 {
-                    int handle = Convert.ToInt32(msg["handle"]);
+                    int handle = msg.GetProperty("handle").GetInt32();
                     if (!connections.TryGetValue(handle, out HidConnection conn)) throw new InvalidOperationException("닫힌 장치입니다");
-                    byte reportId = Convert.ToByte(msg["reportId"]);
-                    var list = (System.Collections.ArrayList)msg["data"];
-                    var data = new byte[list.Count];
-                    for (int i = 0; i < data.Length; i++) data[i] = Convert.ToByte(list[i]);
+                    byte reportId = msg.GetProperty("reportId").GetByte();
+                    byte[] data = msg.GetProperty("data").EnumerateArray().Select(b => b.GetByte()).ToArray();
                     Task.Run(() =>
                     {
                         try
@@ -222,7 +280,7 @@ namespace WiiHwTest
 
                 case "hid.close":
                 {
-                    int handle = Convert.ToInt32(msg["handle"]);
+                    int handle = msg.GetProperty("handle").GetInt32();
                     if (connections.TryGetValue(handle, out HidConnection conn))
                     {
                         connections.Remove(handle);
@@ -234,7 +292,7 @@ namespace WiiHwTest
                 case "bt.pair":
                 {
                     if (pairing != null) throw new InvalidOperationException("이미 등록을 진행 중입니다");
-                    int seconds = msg.TryGetValue("seconds", out object s) ? Convert.ToInt32(s) : 120;
+                    int seconds = msg.TryGetProperty("seconds", out JsonElement s) ? s.GetInt32() : 120;
                     var p = new WiimotePairing(progress => Post(() => Send(new Dictionary<string, object>(progress) { ["event"] = "bt.progress" })));
                     pairing = p;
                     Task.Run(() =>
@@ -262,12 +320,12 @@ namespace WiiHwTest
                     return true;
 
                 case "log.append":
-                    AppendLog(msg.TryGetValue("line", out object line) ? line as string : null);
+                    AppendLog(Str(msg, "line"));
                     return true;
 
                 case "rec.append":
                 {
-                    string text = msg.TryGetValue("text", out object t) ? t as string : null;
+                    string text = Str(msg, "text");
                     if (!string.IsNullOrEmpty(text))
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(recordPath));
@@ -281,7 +339,7 @@ namespace WiiHwTest
                     string dir = Path.Combine(baseDir, "results");
                     Directory.CreateDirectory(dir);
                     string file = Path.Combine(dir, DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json");
-                    File.WriteAllText(file, msg.TryGetValue("json", out object j) ? j as string : "{}", Utf8);
+                    File.WriteAllText(file, Str(msg, "json") ?? "{}", Utf8);
                     return file;
                 }
 
@@ -289,6 +347,9 @@ namespace WiiHwTest
                     throw new InvalidOperationException("알 수 없는 명령: " + cmd);
             }
         }
+
+        private static string ProductVersion =>
+            Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
 
         private void AppendLog(string line)
         {
@@ -325,21 +386,18 @@ namespace WiiHwTest
 
         private void Send(object message)
         {
-            if (web.CoreWebView2 == null || IsDisposed) return;
-            web.CoreWebView2.PostWebMessageAsJson(json.Serialize(message));
+            if (core == null || closed) return;
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json));
         }
 
         private void Post(Action a)
         {
-            if (IsDisposed || !IsHandleCreated) return;
-            try
+            if (closed) return;
+            Dispatcher.UIThread.Post(() =>
             {
-                BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
-                // 창이 닫히는 중
-            }
+                // 창이 닫히는 중이면 버린다.
+                if (!closed) a();
+            });
         }
     }
 }

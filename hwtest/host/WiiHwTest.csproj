@@ -1,22 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    Wii 총 실물 검증 앱. 게임과 별개의 실행 파일이다.
+    Wii 총 실물 검증 앱. 게임과 별개의 실행 파일이다(.NET 10 + Avalonia 12 + WebView2, 런타임 자체 포함).
     블루투스 등록·HID 송수신은 게임에서 검증한 코드(host/)를 그대로 링크해 쓴다.
     빌드: npm run hwtest:build
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net48</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
-    <LangVersion>latest</LangVersion>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <Nullable>disable</Nullable>
-    <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>WiiHwTest</AssemblyName>
     <RootNamespace>WiiHwTest</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>WiiHwTest</Product>
+    <SatelliteResourceLanguages>ko</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../host/HidDevices.cs" Link="Shared/HidDevices.cs" />
@@ -24,8 +26,16 @@
     <Compile Include="../../host/WiimotePairing.cs" Link="Shared/WiimotePairing.cs" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Controls.WebView" Version="12.1.1" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <Reference Include="System.Web.Extensions" />
   </ItemGroup>
+  <!-- WebView2 패키지가 함께 넣는 WinForms·WPF 래퍼는 쓰지 않는다(Core만 쓴다). -->
+  <Target Name="RemoveWebView2UiWrappers" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.WinForms' Or '%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 </Project>

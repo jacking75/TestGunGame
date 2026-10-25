@@ -1,25 +1,36 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    게임 실행 파일. Windows 10/11에 기본 내장된 .NET Framework 4.8과 WebView2 런타임을 쓰므로
-    구매자 PC에 별도 런타임을 설치하지 않는다. 빌드: dotnet build -c Release
+    게임 실행 파일. .NET 10 + Avalonia 12 창 안의 NativeWebView(Windows에서는 WebView2)에 게임을 띄운다.
+    .NET 런타임을 실행 파일 옆에 함께 넣으므로(자체 포함) 구매자 PC에 별도 런타임을 설치하지 않는다.
+    WebView2 런타임은 Windows 10/11 기본 내장이다. 빌드: dotnet build -c Release
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net48</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
-    <LangVersion>latest</LangVersion>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <Nullable>disable</Nullable>
-    <PlatformTarget>x64</PlatformTarget>
     <AssemblyName>TestGunGame</AssemblyName>
     <RootNamespace>TestGunGame.Host</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <Version>0.1.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Product>TestGunGame</Product>
+    <SatelliteResourceLanguages>ko</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
+    <PackageReference Include="Avalonia.Controls.WebView" Version="12.1.1" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <Reference Include="System.Web.Extensions" />
   </ItemGroup>
+  <!-- WebView2 패키지가 함께 넣는 WinForms·WPF 래퍼는 쓰지 않는다(Core만 쓴다). -->
+  <Target Name="RemoveWebView2UiWrappers" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.WinForms' Or '%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 </Project>

@@ -11,11 +11,11 @@
     "test": "vitest run",
     "app:build": "node scripts/build-app.mjs",
     "app:pack": "node scripts/pack-app.mjs",
-    "app": "host\\bin\\Release\\net48\\TestGunGame.exe",
+    "app": "host\\bin\\Release\\net10.0\\TestGunGame.exe",
     "verify:exe": "node scripts/verify-exe.mjs",
-    "app:dev": "dotnet build host -c Debug --nologo -v q && host\\bin\\Debug\\net48\\TestGunGame.exe --dev http://localhost:25001/",
+    "app:dev": "dotnet build host -c Debug --nologo -v q && host\\bin\\Debug\\net10.0\\TestGunGame.exe --dev http://localhost:25001/",
     "hwtest:build": "node scripts/build-hwtest.mjs",
-    "hwtest": "hwtest\\host\\bin\\Release\\net48\\WiiHwTest.exe",
+    "hwtest": "hwtest\\host\\bin\\Release\\net10.0\\WiiHwTest.exe",
     "hwtest:verify": "node scripts/verify-hwtest.mjs"
   },
   "dependencies": {
